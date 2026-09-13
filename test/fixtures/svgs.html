@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SVG hunting ground</title>
+<style>
+  body { font: 14px system-ui, sans-serif; padding: 24px; color: #334155; }
+  .row { display: flex; gap: 24px; align-items: center; margin-bottom: 24px; }
+  .icon { width: 32px; height: 32px; color: #E11D48; }               /* currentColor from page CSS */
+  .logo path { fill: #F97316; stroke: #7C2D12; stroke-width: 2px; }   /* fill only in page CSS */
+  .sprite-use { width: 40px; height: 40px; color: #0EA5E9; }
+  .bg-icon { width: 48px; height: 48px; background: url(/assets/check.svg) center / contain no-repeat; }
+  .pseudo::before { content: ""; display: inline-block; width: 24px; height: 24px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%2322C55E'/%3E%3C/svg%3E"); }
+  .sized { width: 64px; height: 64px; }
+</style>
+</head>
+<body>
+  <!-- A sprite sheet: hidden, only <symbol>s. -->
+  <svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-heart" viewBox="0 0 24 24"><path fill="currentColor" d="M12 21s-8-5.3-8-11a5 5 0 0 1 8-4 5 5 0 0 1 8 4c0 5.7-8 11-8 11z"/></symbol>
+    <symbol id="icon-bolt" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" d="M13 2 3 14h9l-1 8 10-12h-9z"/></symbol>
+  </svg>
+  <!-- Shared defs living outside the SVG that uses them. -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs><linearGradient id="brand-grad" x1="0" x2="1"><stop offset="0" stop-color="#6C6CF8"/><stop offset="1" stop-color="#EC4899"/></linearGradient></defs>
+  </svg>
+
+  <div class="row">
+    <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 2 22h20z"/></svg>
+    <span>Inline, currentColor from CSS</span>
+  </div>
+  <div class="row">
+    <svg class="logo" width="80" height="40"><path d="M5 35 40 5 75 35z"/></svg>
+    <span>Inline, no viewBox, fill from page stylesheet</span>
+  </div>
+  <div class="row">
+    <svg class="sprite-use"><use href="#icon-heart"/></svg>
+    <svg class="sprite-use" style="color:#A855F7"><use xlink:href="#icon-bolt"/></svg>
+    <span>&lt;use&gt; from the sprite</span>
+  </div>
+  <div class="row">
+    <svg class="sized" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="url(#brand-grad)"/></svg>
+    <span>Gradient defined in another SVG</span>
+  </div>
+  <div class="row">
+    <img src="/assets/illustration.svg" width="240" alt="Illustration">
+    <span>&lt;img&gt; file — a large illustration</span>
+  </div>
+  <div class="row">
+    <div class="bg-icon"></div>
+    <span class="pseudo">CSS background + data URI pseudo-element</span>
+  </div>
+  <div class="row">
+    <object data="/assets/star.svg" type="image/svg+xml" width="48" height="48"></object>
+    <span>&lt;object&gt;</span>
+  </div>
+  <div class="row">
+    <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 2 22h20z"/></svg>
+    <span>Duplicate of the first icon</span>
+  </div>
+</body>
+</html>

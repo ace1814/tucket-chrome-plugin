@@ -1,0 +1,16 @@
+{
+  "name": "tucket-grab",
+  "version": "1.0.0",
+  "description": "Tucket Grab — colours, fonts, SVGs and full-page screenshots for Chromium browsers. Works with Tucket for Mac.",
+  "scripts": {
+    "test": "node test/run.mjs",
+    "icons": "node tools/make-icons.mjs",
+    "package": "node tools/package.mjs"
+  },
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "puppeteer-core": "^25.10.0"
+  },
+  "private": true
+}

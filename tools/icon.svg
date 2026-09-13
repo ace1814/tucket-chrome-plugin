@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Placeholder toolbar icon until the real design lands: an arrow tucking into a tray. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8484FB"/>
+      <stop offset="1" stop-color="#5656E6"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#g)"/>
+  <g fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 28v44"/>
+    <path d="M45 54l19 19 19-19"/>
+    <path d="M32 74v12a8 8 0 0 0 8 8h48a8 8 0 0 0 8-8V74"/>
+  </g>
+</svg>

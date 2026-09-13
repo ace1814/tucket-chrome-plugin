@@ -1,0 +1,15 @@
+body { background: var(--bg-2); }
+main { max-width: 620px; margin: 56px auto; padding: 40px; background: var(--bg); border-radius: 16px; border: 1px solid var(--line); }
+.logo { border-radius: 16px; }
+h1 { font-size: 26px; margin: 18px 0 6px; letter-spacing: -.01em; }
+.lede { font-size: 15px; color: var(--fg-2); margin: 0 0 24px; }
+.steps { margin: 0 0 28px; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; }
+kbd { font: 12px var(--mono); background: var(--bg-2); border: 1px solid var(--line); border-radius: 5px; padding: 2px 6px; }
+.features { list-style: none; padding: 0; margin: 0 0 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.features li { background: var(--bg-2); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.features span { color: var(--fg-2); font-size: 12.5px; }
+.tucket { border-top: 1px solid var(--line); padding-top: 20px; }
+.tucket h2 { font-size: 15px; margin: 0 0 6px; }
+.tucket p { color: var(--fg-2); margin: 0 0 8px; }
+.tucket .tg-footer { border: 0; padding: 8px 0 0; }
+@media (max-width: 640px) { main { margin: 0; border-radius: 0; padding: 24px; } .features { grid-template-columns: 1fr; } }

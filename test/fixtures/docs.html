@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Docs site with inner scroll</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 15px/1.6 system-ui, sans-serif; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; height: 100%; }
+  aside { background: #0F172A; color: #CBD5E1; padding: 20px; }
+  main { overflow-y: auto; padding: 0 40px; }
+  .page { height: 900px; border-bottom: 3px solid #94A3B8; display: flex; align-items: center; font-size: 48px; }
+  .page:nth-child(odd) { background: #F8FAFC; }
+  .page:nth-child(even) { background: #ECFEFF; }
+  .toc { position: sticky; top: 0; background: #FDE68A; padding: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+  <div class="layout">
+    <aside>Sidebar (does not scroll)</aside>
+    <main>
+      <div class="toc">Sticky table of contents</div>
+      <div class="page">Doc page 1</div>
+      <div class="page">Doc page 2</div>
+      <div class="page">Doc page 3</div>
+      <div class="page">Doc page 4 — end</div>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+# The private half of the manifest key. Never commit it.
+keys/
+dist/
+*.zip
+*.crx
+*.pem
+test/.build/
+test/out/

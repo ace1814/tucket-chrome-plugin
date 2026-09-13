@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Tucket Grab: Colors, Fonts, SVGs, Screenshots",
+  "short_name": "Tucket Grab",
+  "version": "1.0.0",
+  "description": "Pick colours, read fonts, grab real SVGs and full-page screenshots. Nothing leaves your machine. Works with Tucket for Mac.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlnm+8ACMiDorBHArIAaWNWXUk9Unr3uSyhtsTc5PH6xGx7i8WsrGJIF6FG/VweqKGeTzSKOXe+3gsXxg89MFvgH0Wt+rygOFMOozs6zguD1bAgesunApZbhOFEdtFbgb4Vt24D8Z2cFO6ZhCzuvpKT/bJ0wVNReropzLrabE+EFhtCnGFJFgpiSadnaRQGVVgz3isE7t/7Ev57E4tXDM36CfOgI81+pxGEJauLGfrLCqTXBp9OPh/rYR48LyPOmQGTpLoG8Uj5GxuwdZhMKKwiYwVtRmbXJvPGLrQBg/Shc9i0VeBeyzMC8SHt4/f6+ArBOSCcyXQVNp6CiUOGhW5QIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting", "storage", "clipboardWrite"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Tucket Grab",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+G", "mac": "Alt+Shift+G" },
+      "description": "Open Tucket Grab"
+    }
+  }
+}

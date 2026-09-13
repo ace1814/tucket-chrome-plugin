@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hostile marketing page</title>
+<!-- Fixed header, sticky sub-nav, a fixed chat bubble, lazy images, a web font and a
+     CSS-variable design system: everything that breaks naive screenshot and palette tools. -->
+<style>
+  @font-face { font-family: "Test Serif"; src: url(/font/serif.ttf); font-weight: 400; }
+  @font-face { font-family: "Never Used"; src: url(/font/serif.ttf); font-weight: 700; }
+  :root {
+    --brand-500: #6C6CF8;
+    --brand-700: oklch(45% 0.2 275);
+    --accent: 24 95% 53%;          /* shadcn-style bare HSL channels */
+    --surface: rgb(250 250 252);
+    --radius: 12px;                /* not a colour */
+    --space-4: 16px;
+  }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #1F2937; background: var(--surface); }
+  header { position: fixed; top: 0; left: 0; right: 0; height: 64px; background: #111827; color: #fff;
+           display: flex; align-items: center; padding: 0 24px; z-index: 10; font-weight: 600; }
+  nav.sub { position: sticky; top: 64px; background: hsl(var(--accent)); color: #fff; padding: 10px 24px; z-index: 5; }
+  .spacer { height: 64px; }
+  section { height: 900px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 16px;
+            border-bottom: 4px dashed rgba(0,0,0,.2); }
+  section:nth-child(odd) { background: #F3F4F6; }
+  section:nth-child(even) { background: #E0E7FF; }
+  h1, h2 { font-family: "Test Serif", Georgia, serif; font-weight: 400; margin: 0; font-size: 64px; }
+  .cta { background: var(--brand-500); color: #fff; border: 2px solid var(--brand-700); padding: 12px 20px; border-radius: var(--radius); }
+  img.lazy { width: 480px; height: 240px; background: #ddd; border-radius: 8px; }
+  .chat { position: fixed; right: 24px; bottom: 24px; width: 56px; height: 56px; border-radius: 50%; background: #10B981;
+          box-shadow: 0 6px 20px rgba(16,185,129,.5); }
+  code { font-family: "Courier New", monospace; font-size: 14px; }
+</style>
+</head>
+<body>
+  <header>Acme · fixed header</header>
+  <div class="spacer"></div>
+  <nav class="sub">Sticky sub-nav</nav>
+  <main>
+    <section><h1>Screen 1</h1><button class="cta">Get started</button><code>npm i acme</code></section>
+    <section><h2>Screen 2</h2><img class="lazy" data-src="/lazy/2.svg" alt=""></section>
+    <section><h2>Screen 3</h2><img class="lazy" data-src="/lazy/3.svg" alt=""></section>
+    <section><h2>Screen 4</h2><img class="lazy" data-src="/lazy/4.svg" alt=""></section>
+    <section><h2>Screen 5</h2><img class="lazy" data-src="/lazy/5.svg" alt=""></section>
+    <section><h2>Screen 6</h2><img class="lazy" data-src="/lazy/6.svg" alt=""></section>
+    <section><h2>Screen 7 — the end</h2></section>
+  </main>
+  <div class="chat" title="Fixed chat bubble"></div>
+  <script>
+    // JS lazy-loading, the kind that only fires when an image scrolls into view.
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.src = e.target.dataset.src; io.unobserve(e.target); }
+    });
+    document.querySelectorAll('img.lazy').forEach((img) => io.observe(img));
+  </script>
+</body>
+</html>
