@@ -247,10 +247,8 @@ if (want('panel')) {
   check(await inPanel(page, (r) => r.querySelectorAll('[data-tab]').length) === 4, 'four tabs');
   check(await inPanel(page, (r) => [...r.querySelectorAll('[data-shot]')].map((b) => b.textContent.trim()).join('|')) === 'Full page|Visible area|Selected area', 'three screenshot types');
 
-  // Locked Tucket tools: explained kindly in place.
-  await clickIn(page, '[data-tool="ocr-area"]');
-  await sleep(200);
-  check(/This one happens in Tucket/.test(await inPanel(page, (r) => r.querySelector('.card')?.textContent || '')), 'locked tool opens the “happens in Tucket” card');
+  // No Tucket pitch up front: the tools live on the screenshot result page.
+  check(await inPanel(page, (r) => !r.querySelector('[data-tool]') && !/With Tucket/.test(r.textContent)), 'panel opens without the Tucket tools');
 
   // Colour: brand swatch copies a hex literal, format toggle switches to rgb().
   await clickIn(page, '[data-tab="colour"]');
@@ -465,10 +463,6 @@ if (want('screens')) {
         await page.screenshot({ path: path.join(OUT, `${name}.png`), clip: { x: 1280 - 400, y: await page.evaluate(() => scrollY), width: 400, height: 860 } });
       }
       if (fixture === 'marketing.html') {
-        await clickIn(page, '[data-tab="shot"]');
-        await clickIn(page, '[data-tool="cutout"]');
-        await sleep(450);
-        await page.screenshot({ path: path.join(OUT, `screen-locked-${dark ? 'dark' : 'light'}.png`), clip: { x: 1280 - 400, y: await page.evaluate(() => scrollY), width: 400, height: 860 } });
         await clickIn(page, '[data-tab="colour"]');
         await clickIn(page, '[data-act="all"]');
         await sleep(300);
@@ -488,7 +482,14 @@ if (want('screens')) {
   await page.mouse.up();
   const capture = await waitForCapture();
   await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+  check(await capture.$eval('#lock-card', (e) => e.hidden), 'result page shows no Tucket pitch until a tool is tapped');
   await capture.screenshot({ path: path.join(OUT, 'screen-capture-page.png') });
+  await capture.click('[data-tool="ocr"]');
+  await capture.waitForSelector('#lock-card:not([hidden])');
+  check(/This one happens in Tucket/.test(await capture.$eval('#lock-card', (e) => e.textContent)), 'tapping Copy text without Tucket explains it kindly');
+  await capture.screenshot({ path: path.join(OUT, 'screen-capture-locked.png') });
+  await capture.click('#lock-close');
+  check(await capture.$eval('#lock-card', (e) => e.hidden), '“Not now” closes it');
   await capture.close();
   await page.close();
 }

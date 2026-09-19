@@ -22,11 +22,6 @@
     fullpage: icon('<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M9 7h6M9 10.5h6M9 14h4"/><path d="m12 17 0 2.5"/>', 26, 'stroke-width="1.6"'),
     visible: icon('<rect x="2.5" y="4.5" width="19" height="13" rx="2.5"/><path d="M8 21h8M12 17.5V21"/>', 26, 'stroke-width="1.6"'),
     region: icon('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2"/>', 26, 'stroke-width="1.6"'),
-    textScan: icon('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 9.5h8M8 12.5h8M8 15.5h5"/>', 17),
-    textImage: icon('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9h10M7 12h10M7 15h6"/>', 17),
-    cutout: icon('<circle cx="12" cy="9.5" r="3.2"/><path d="M6 19.5c1.3-3.4 10.7-3.4 12 0"/><path d="M3 7V4.5A1.5 1.5 0 0 1 4.5 3H7M17 3h2.5A1.5 1.5 0 0 1 21 4.5V7M21 17v2.5a1.5 1.5 0 0 1-1.5 1.5H17M7 21H4.5A1.5 1.5 0 0 1 3 19.5V17" stroke-dasharray="2 2.4"/>', 17),
-    lock: icon('<rect x="5.5" y="10.5" width="13" height="10" rx="2.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>', 15),
-    lockBig: icon('<rect x="5.5" y="10.5" width="13" height="10" rx="2.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>', 18),
     chevron: icon('<path d="m9.5 6 6 6-6 6"/>', 14, 'stroke-width="2.2"'),
     eyedropper: icon('<path d="m2.5 21.5 1-1h3l8.5-8.5"/><path d="M3.5 20.5v-3l8.5-8.5"/><path d="m14.5 5.5 3-3a2.1 2.1 0 0 1 3 3l-3 3 .5.5a1.8 1.8 0 0 1-2.5 2.5l-4-4A1.8 1.8 0 0 1 14 5l.5.5z"/>', 18),
     pointer: icon('<path d="m5 3 14 7-6 2-2 6z"/><path d="m13 12 5 5"/>', 28, 'stroke-width="1.7"'),
@@ -41,11 +36,6 @@
     { id: 'svg', label: 'SVG', icon: I.svg },
   ];
 
-  const TOOLS = [
-    { id: 'ocr-area', icon: I.textScan, title: 'Text from an area', sub: 'Drag over anything to copy its words' },
-    { id: 'ocr-image', icon: I.textImage, title: 'Text from an image', sub: 'Click any image on the page' },
-    { id: 'cutout', icon: I.cutout, title: 'Remove background', sub: 'Lift the subject out of an image' },
-  ];
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const isMac = () => /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
@@ -122,9 +112,7 @@
       recent: [],
       grabs: [],
       current: null,        // the SVG grab shown in the preview
-      lockOpen: false,
       shotError: null,
-      toolResult: null,
     };
     let copies = [];
     let target = null;      // what the pointer is over, in a pick mode
@@ -215,8 +203,6 @@
 
     function select(tab) {
       s.tab = tab;
-      s.lockOpen = false;
-      s.toolResult = null;
       if (tab !== 'font') s.inspect = false;
       chrome.storage.local.set({ panelTab: tab });
       const index = TABS.findIndex((t) => t.id === tab);
@@ -239,49 +225,13 @@
     // ---------- Screenshot ----------
 
     function viewShot() {
-      const locked = !connected();
       return `
         <div class="tiles">
           <button class="tile primary" data-shot="full">${I.fullpage}<span>Full page</span></button>
           <button class="tile" data-shot="visible">${I.visible}<span>Visible area</span></button>
           <button class="tile" data-shot="region">${I.region}<span>Selected area</span></button>
         </div>
-        ${s.shotError ? `<p class="error">${esc(s.shotError)}</p>` : '<p class="note">Sticky headers show once and lazy images load first. Save as PNG, JPEG, WebP or PDF.</p>'}
-        <div class="label">With Tucket</div>
-        <div class="rows">
-          ${TOOLS.map((t) => `
-            <button class="row" data-tool="${t.id}">
-              <span class="ic">${t.icon}</span>
-              <span class="t"><b>${t.title}</b><span>${t.sub}</span></span>
-              <span class="end" aria-label="${locked ? 'Needs Tucket' : ''}">${locked ? I.lock : I.chevron}</span>
-            </button>`).join('')}
-        </div>
-        ${s.lockOpen ? viewLock() : ''}
-        ${s.toolResult ? viewToolResult() : ''}`;
-    }
-
-    function viewLock() {
-      if (!isMac()) {
-        return `<div class="card"><div class="card-head">${I.lockBig}<span>This one happens in Tucket</span></div>
-          <p>Tucket reads text and lifts subjects on the Mac, with Apple’s on-device Vision. It’s Mac-only, so this one isn’t here — but screenshots, fonts, colours and SVGs all work.</p>
-          <div class="actions"><button class="btn" data-act="lock-close">Got it</button></div></div>`;
-      }
-      return `<div class="card"><div class="card-head">${I.lockBig}<span>This one happens in Tucket</span></div>
-        <p>Tucket reads text and lifts subjects right on your Mac, with Apple’s on-device Vision. Nothing is uploaded — that’s why it lives in the app, not the browser.</p>
-        <div class="actions">
-          <a class="btn primary" href="${CTA}" target="_blank" rel="noopener">Get Tucket for Mac</a>
-          <button class="btn" data-act="lock-close">Not now</button>
-        </div>
-        <p class="fine">Already have it? Update to Tucket 1.3.8 and open it once.</p></div>`;
-    }
-
-    function viewToolResult() {
-      const r = s.toolResult;
-      if (r.text != null) {
-        return `<div class="card result"><div class="card-head">${I.textScan}<span>${r.text ? 'Text found' : 'No text found'}</span></div>
-          ${r.text ? `<pre>${esc(r.text)}</pre><div class="actions"><button class="btn primary" data-copy="${copyId(r.text)}">${I.copy} Copy text</button></div>` : ''}</div>`;
-      }
-      return `<div class="card result"><p>${esc(r.message || 'Done')}</p></div>`;
+        ${s.shotError ? `<p class="error">${esc(s.shotError)}</p>` : '<p class="note">Sticky headers show once and lazy images load first. Save as PNG, JPEG, WebP or PDF.</p>'}`;
     }
 
     async function startShot(mode) {
@@ -296,18 +246,6 @@
       }
     }
 
-    function runTool(id) {
-      if (!connected()) {
-        s.lockOpen = !s.lockOpen;
-        s.toolResult = null;
-        render();
-        return;
-      }
-      // Connected: the bridge flows arrive with Tucket 1.3.8 (see lib/tucket.js).
-      chrome.runtime.sendMessage({ type: 'tool:start', tool: id }).then((res) => {
-        if (!res?.ok) toast(res?.error || 'Tucket didn’t answer');
-      });
-    }
 
     // ---------- Font ----------
 
@@ -574,12 +512,10 @@
       if (btn.dataset.tab) return select(btn.dataset.tab);
       if (btn.dataset.copy != null) return send('text', copies[+btn.dataset.copy]);
       if (btn.dataset.shot) return startShot(btn.dataset.shot);
-      if (btn.dataset.tool) return runTool(btn.dataset.tool);
       if (btn.dataset.format) return chrome.storage.local.set({ colorFormat: btn.dataset.format });
       if (btn.dataset.grab) { s.current = s.grabs[+btn.dataset.grab]; return render(); }
       switch (btn.dataset.act) {
         case 'close': return destroy();
-        case 'lock-close': s.lockOpen = false; return render();
         case 'inspect': s.inspect = !s.inspect; clearTarget(); return render();
         case 'all': s.showAll = !s.showAll; return render();
         case 'eyedropper': return eyedropper();

@@ -90,6 +90,26 @@ async function boot() {
     $('#save-all').textContent = `Save all ${parts.length} PNGs`;
   }
   $('#send-first').onclick = () => sendPng(parts[0].blob);
+
+  // Tucket tools live here, after a capture, rather than as a pitch in the panel.
+  $('#lock-cta').href = TGFooter.ctaUrl('capture-tools');
+  if (!/mac/i.test(navigator.userAgentData?.platform || navigator.platform || '')) {
+    $('#lock-body').textContent = 'Tucket reads text and lifts subjects on the Mac, with Apple’s on-device Vision. It’s Mac-only, so these two aren’t available here — saving and copying work as usual.';
+    $('#lock-cta').hidden = true;
+    $('#lock-fine').hidden = true;
+    $('#lock-close').textContent = 'Got it';
+  }
+  $('#lock-close').onclick = () => { $('#lock-card').hidden = true; };
+  for (const btn of document.querySelectorAll('[data-tool]')) {
+    btn.onclick = async () => {
+      if (!(await TGSend.hasTucket())) {
+        $('#lock-card').hidden = false;
+        return;
+      }
+      const res = await chrome.runtime.sendMessage({ type: 'tool:start', tool: btn.dataset.tool, captureId: id }).catch(() => null);
+      if (!res?.ok) toast(res?.error || 'Tucket didn’t answer');
+    };
+  }
   $('#save-all').onclick = async () => {
     for (let i = 0; i < parts.length; i++) {
       download(fileName(capture, i, parts.length), parts[i].blob);

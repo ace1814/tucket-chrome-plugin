@@ -18,10 +18,25 @@
       <span id="page-meta"></span>
     </div>
     <div class="top-actions" id="top-actions" hidden>
+      <div class="tools" role="group" aria-label="Tucket tools">
+        <button type="button" class="btn" data-tool="ocr">Copy text</button>
+        <button type="button" class="btn" data-tool="cutout">Remove background</button>
+      </div>
       <button type="button" class="btn primary" id="send-first">Send to Tucket</button>
       <button type="button" class="btn" id="save-all">Save PNG</button>
     </div>
   </header>
+
+  <!-- Shown only when someone taps a Tucket tool without Tucket connected. -->
+  <section class="lock-card" id="lock-card" hidden>
+    <strong>This one happens in Tucket</strong>
+    <p id="lock-body">Tucket reads text and lifts subjects right on your Mac, with Apple’s on-device Vision. Nothing is uploaded — that’s why it lives in the app, not the browser.</p>
+    <div class="lock-actions">
+      <a class="btn primary" id="lock-cta" target="_blank" rel="noopener">Get Tucket for Mac</a>
+      <button type="button" class="btn" id="lock-close">Not now</button>
+    </div>
+    <p class="fine" id="lock-fine">Already have it? Update to Tucket 1.3.8 and open it once.</p>
+  </section>
 
   <ul class="notes" id="notes" hidden></ul>
   <p class="missing" id="missing" hidden>This screenshot is no longer available. Captures are kept on this computer for a day.</p>
