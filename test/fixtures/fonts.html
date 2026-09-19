@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Font sources</title>
+<!-- Inter from Google Fonts (source is in the stylesheet URL), Roboto Mono self-hosted (only
+     Fontsource can say it's free), and a made-up commercial font (nobody knows it: find to buy). -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap">
+<style>
+  @font-face { font-family: "Roboto Mono"; src: url(/font/serif.ttf); }
+  @font-face { font-family: "Acme Grotesk Pro"; src: url(/font/serif.ttf); }
+  @font-face { font-family: "Lexend Variable"; src: url(/font/serif.ttf); }
+  .lex { font-family: "Lexend Variable", sans-serif; }
+  body { margin: 40px; font: 18px/1.5 Inter, sans-serif; }
+  h1 { font-family: "Acme Grotesk Pro", serif; font-size: 48px; }
+  code { font-family: "Roboto Mono", monospace; }
+</style>
+</head>
+<body>
+  <h1>Font sources</h1>
+  <p>Body copy set in Inter, loaded from Google Fonts. It should say Google Fonts and offer a free download.</p>
+  <p class="lex">A variable build renamed by the site: “Lexend Variable” is still free Lexend.</p>
+  <p><code>const mono = "Roboto Mono, self-hosted";</code></p>
+</body>
+</html>

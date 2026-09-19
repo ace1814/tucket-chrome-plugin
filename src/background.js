@@ -78,6 +78,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'tucket:send':
       sendToTucket(msg, sender).then(sendResponse);
       return true;
+    case 'fonts:lookup':
+      lookupFonts(msg.families || []).then(sendResponse);
+      return true;
     case 'tool:start':
       sendResponse({ ok: false, error: 'This arrives with Tucket 1.3.8.' });
       return;
@@ -98,6 +101,52 @@ async function sendToTucket({ kind, data, pageUrl, pageTitle }, sender) {
     tucket.forget();
     return { ok: false, error: String(err?.message || err) };
   }
+}
+
+// ---------- font lookups ----------
+
+// For web fonts the page doesn't say the source of (self-hosted), ask Fontsource whether the family
+// is a free, open-licence font. Only the family name is sent — never the page. Answers are cached
+// on this computer so each family is looked up at most once a month.
+const FONTSOURCE_API = 'https://api.fontsource.org/v1/fonts/';
+const LOOKUP_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const LOOKUP_CACHE_MAX = 500;
+
+const fontId = (family) => family.toLowerCase().replace(/['"]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+async function lookupFonts(families) {
+  const { fontLookups = {} } = await chrome.storage.local.get('fontLookups');
+  const out = {};
+  let changed = false;
+  await Promise.all(families.slice(0, 20).map(async (family) => {
+    const id = fontId(family);
+    if (!id) return;
+    const hit = fontLookups[id];
+    if (hit && Date.now() - hit.at < LOOKUP_TTL_MS) { out[family] = hit.value; return; }
+    try {
+      // Sites rename variable builds ("Inter Variable", "sohne-var"); try the plain family too.
+      const plain = id.replace(/-(variable|var|vf)$/, '');
+      let value = null;
+      for (const candidate of plain !== id ? [id, plain] : [id]) {
+        const res = await fetch(FONTSOURCE_API + candidate, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store' });
+        if (res.status === 404) { value = { found: false }; continue; }
+        if (!res.ok) { value = null; break; }
+        const f = await res.json();
+        value = { found: true, id: f.id || candidate, family: f.family || family, type: f.type || '', license: f.license || '' };
+        break;
+      }
+      if (value) {
+        out[family] = value;
+        fontLookups[id] = { at: Date.now(), value };
+        changed = true;
+      }
+    } catch { /* offline: no link rather than a wrong one */ }
+  }));
+  if (changed) {
+    const entries = Object.entries(fontLookups).sort((a, b) => b[1].at - a[1].at).slice(0, LOOKUP_CACHE_MAX);
+    await chrome.storage.local.set({ fontLookups: Object.fromEntries(entries) });
+  }
+  return out;
 }
 
 // ---------- plumbing ----------

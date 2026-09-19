@@ -2,7 +2,7 @@
 // extension loaded. Writes screenshots, stitched captures and serialised SVGs to test/out/.
 //
 //   npm test                 all suites
-//   npm test -- svgs shots   just those suites (palette, fonts, svgs, panel, pick, shots, screens)
+//   npm test -- svgs shots   just those suites (palette, fonts, fontsource, svgs, panel, pick, shots, screens)
 //   HEADFUL=1 npm test       watch it run
 //
 // Two test-only changes to the build in test/.build, never shipped:
@@ -191,11 +191,19 @@ if (want('palette')) {
   check(!!vars['--accent'], 'bare-channel HSL variable --accent resolved');
   check(!vars['--radius'] && !vars['--space-4'], 'non-colour variables ignored');
   const brand = result.brand.map(hexOf);
-  check(result.brand.length === 3 && result.brand.every((c) => !c.neutral), 'three brand colours, none neutral', brand.join(' '));
-  check(!brand.some((h) => ['#FFFFFF', '#F3F4F6', '#111827', '#1F2937', '#E0E7FF'].includes(h)), 'brand skips white, greys, ink and pale tints', brand.join(' '));
-  check(brand.includes('#F97015') || brand.some((h) => h.startsWith('#F9')), 'orange sub-nav is a brand colour', brand.join(' '));
-  check(brand.includes('#6C6CF8') || brand.includes('#3D3CC1'), 'violet button is a brand colour', brand.join(' '));
+  check(brand[0] === '#F3F4F6', 'Primary is the most-used colour (the grey sections)', brand.join(' '));
+  check(brand[1] === '#6C6CF8' && result.brand[1].cta, 'Secondary is the CTA button colour', brand.join(' '));
+  check(brand[2] === '#E0E7FF', 'Tertiary is the next most-used distinct colour', brand.join(' '));
   await page.close();
+
+  console.log('\nPalette — cta.html (black buttons, loud cookie banner)');
+  const cta = await openFixture('cta.html');
+  const r2 = await tg(cta.tabId, 'palette', 'palette.scan');
+  const b2 = r2.brand.map(hexOf);
+  check(b2[0] === '#FFFFFF', 'Primary is white, the most-used colour', b2.join(' '));
+  check(b2[1] === '#000000' && r2.brand[1].cta, 'Secondary is the black CTA, not the pink cookie button', b2.join(' '));
+  check(b2[2] === '#FDE68A', 'Tertiary skips the near-white grey and finds the yellow band', b2.join(' '));
+  await cta.page.close();
 }
 
 if (want('fonts')) {
@@ -210,6 +218,31 @@ if (want('fonts')) {
   check(by['system-ui']?.kind === 'generic', 'generic family reported as system-ui');
   check(!by['Never Used'], 'declared-but-unused font not listed as used');
   check(/^Test Serif · 64px\/\d+ · 400$/.test(by['Test Serif']?.line || ''), 'line format "Family · size/line · weight"', by['Test Serif']?.line);
+  await page.close();
+}
+
+if (want('fontsource')) {
+  console.log('\nFont sources — fonts.html (needs the network: Google Fonts + Fontsource)');
+  const { page, tabId } = await openFixture('fonts.html');
+  await page.evaluate(() => document.fonts.ready);
+  await sleep(500);
+  const { used } = await tg(tabId, 'fonts', 'fonts.scan');
+  const by = Object.fromEntries(used.map((f) => [f.family, f]));
+  check(by.Inter?.source === 'google', 'Inter is recognised as Google Fonts from the stylesheet URL', by.Inter?.source);
+  check(by['Roboto Mono']?.source === 'self', 'self-hosted Roboto Mono is marked as the site’s own file', by['Roboto Mono']?.source);
+  await openPanel(page, tabId, 'font');
+  await page.waitForFunction(() => {
+    const root = document.querySelector('tucket-grab')?.shadowRoot;
+    return root && root.querySelectorAll('.pill.go').length >= 4;
+  }, { timeout: 15000 }).catch(() => {});
+  const links = await inPanel(page, (r) => Object.fromEntries([...r.querySelectorAll('.font')].map((f) => [f.querySelector('.sample').textContent, f.querySelector('.pill.go') ? `${f.querySelector('.pill.go').textContent} ${f.querySelector('.pill.go').href}` : ''])));
+  check(/^Download free .*fonts\.google\.com\/specimen\/Inter$/.test(links.Inter || ''), 'Inter: Download free → Google Fonts', links.Inter);
+  check(/^Download free .*fonts\.google\.com\/specimen\/Roboto\+Mono$/.test(links['Roboto Mono'] || ''), 'Roboto Mono: Fontsource knows it’s a free Google font', links['Roboto Mono']);
+  check(/^Download free .*fonts\.google\.com\/specimen\/Lexend$/.test(links['Lexend Variable'] || ''), '“Lexend Variable” is still found as free Lexend', links['Lexend Variable']);
+  check(/^Find to buy .*myfonts\.com\/search\?query=Acme%20Grotesk%20Pro$/.test(links['Acme Grotesk Pro'] || ''), 'unknown commercial font: Find to buy', links['Acme Grotesk Pro']);
+  const sent = await worker.evaluate(async () => Object.keys((await chrome.storage.local.get('fontLookups')).fontLookups || {}));
+  check(sent.includes('roboto-mono') && !sent.includes('inter'), 'only fonts the page doesn’t name get looked up', sent.join(', '));
+  await page.screenshot({ path: path.join(OUT, 'panel-font-sources.png'), clip: { x: 1280 - 400, y: 0, width: 400, height: 860 } });
   await page.close();
 }
 
@@ -254,7 +287,7 @@ if (want('panel')) {
   await clickIn(page, '[data-tab="colour"]');
   await page.waitForSelector('tucket-grab >>> .sw');
   const roles = await inPanel(page, (r) => [...r.querySelectorAll('.sw .role')].map((e) => e.textContent).join(','));
-  check(roles === 'Primary,Secondary,Tertiary', 'primary, secondary and tertiary shown', roles);
+  check(roles === 'Primary,Secondary · CTA,Tertiary', 'primary, CTA secondary and tertiary shown', roles);
   await clickIn(page, '.sw');
   await sleep(250);
   const hex = await clipboard(page);

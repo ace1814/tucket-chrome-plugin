@@ -1,6 +1,10 @@
-// Page palette: every colour in use, weighted by how much of the page it paints, plus the page's
-// brand colours (primary, secondary, tertiary) and colour-valued CSS custom properties.
-// Injected after shared/color.js. Exposes __tg.palette.scan().
+// Page palette. Every colour in use, weighted by how much of the page it visibly covers, and the
+// page's three key colours:
+//   Primary   — the most-used colour (usually the background, and that's the honest answer)
+//   Secondary — the call-to-action colour, read off the page's main buttons (black counts)
+//   Tertiary  — the next most-used colour that looks clearly different from those two
+// Plus colour-valued CSS custom properties. Injected after shared/color.js.
+// Exposes __tg.palette.scan().
 (() => {
   const tg = (globalThis.__tg ??= {});
   if (tg.palette) return;
@@ -17,16 +21,13 @@
   const RGB_TRIPLE = /^([\d.]+)\s+([\d.]+)\s+([\d.]+)$/;
   const NOT_COLOURS = new Set(['inherit', 'initial', 'unset', 'revert', 'currentcolor', 'transparent', 'none']);
 
-  // Brand colours: what's left after dropping the neutrals, with near-duplicates merged.
-  const MIN_CHROMA = 0.1;        // (max − min) channel spread; below this reads as grey
-  const MIN_SATURATION = 0.12;
-  const MIN_LIGHTNESS = 0.07;
-  const MAX_LIGHTNESS = 0.95;
-  // Pale tints (section backgrounds) paint a lot but are rarely what anyone means by the brand;
-  // they're a second tier, used only when the page has fewer than three stronger colours.
-  const PALE_LIGHTNESS = 0.9;
-  const MERGE_DELTA_E = 12;      // CIE76; below this two colours read as the same one
-  const ROLES = ['Primary', 'Secondary', 'Tertiary'];
+  const MERGE_DELTA_E = 12;   // CIE76; closer than this, two colours read as the same one
+  const TEXT_INK = 0.12;      // share of a text line's box that glyphs actually paint
+
+  // A call to action looks like a button, says an action, and sits where people look.
+  const ACTION_WORDS = /\b(get started|start|sign ?up|join|try|buy|shop|order|subscribe|book|download|install|register|create|contact|request|demo|free|continue|upgrade|pricing|apply|donate|add to (cart|bag)|checkout|get)\b/i;
+  const NOT_CTA_WORDS = /\b(accept|reject|decline|cookies?|dismiss|close|cancel|manage preferences)\b/i;
+  const CONSENT_UI = '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[aria-label*="cookie" i]';
 
   function ownText(el) {
     let n = 0;
@@ -34,88 +35,7 @@
     return n;
   }
 
-  function scan() {
-    const counts = new Map();
-    const add = (value, weight, seen) => {
-      const c = TGColor.parse(value);
-      if (!c || c.a === 0) return;
-      const key = TGColor.toHex(c);
-      if (seen) { if (seen.has(key)) return; seen.add(key); }
-      const entry = counts.get(key);
-      const w = weight * c.a;
-      if (entry) { entry.count++; entry.weight += w; }
-      else counts.set(key, { ...c, count: 1, weight: w });
-    };
-
-    const viewportArea = innerWidth * innerHeight;
-    // One huge section shouldn't outvote everything else on the page.
-    const areaCap = viewportArea * 0.15;
-
-    add(getComputedStyle(document.documentElement).backgroundColor, areaCap);
-    if (document.body) add(getComputedStyle(document.body).backgroundColor, areaCap);
-
-    const all = document.body ? document.body.getElementsByTagName('*') : [];
-    let scanned = 0;
-    for (const el of all) {
-      if (scanned >= MAX_ELEMENTS) break;
-      if (SKIP.has(el.localName)) continue;
-      scanned++;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
-      const r = el.getBoundingClientRect();
-      const area = Math.min(r.width * r.height, areaCap);
-      const seen = new Set();
-
-      const chars = ownText(el);
-      if (chars) {
-        const size = parseFloat(cs.fontSize) || 16;
-        add(cs.color, chars * size * size * 0.5, seen);
-      }
-      add(cs.backgroundColor, area, seen);
-      for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
-        const width = parseFloat(cs[`border${side}Width`]);
-        if (width > 0 && cs[`border${side}Style`] !== 'none') {
-          add(cs[`border${side}Color`], width * (side === 'Top' || side === 'Bottom' ? r.width : r.height), seen);
-        }
-      }
-      if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) add(cs.outlineColor, parseFloat(cs.outlineWidth) * (r.width + r.height) * 2, seen);
-      if (SHAPES.has(el.localName)) {
-        if (cs.fill && cs.fill !== 'none' && !cs.fill.startsWith('url')) add(cs.fill, area * 0.6, seen);
-        if (cs.stroke && cs.stroke !== 'none' && !cs.stroke.startsWith('url')) add(cs.stroke, (r.width + r.height) * 2 * (parseFloat(cs.strokeWidth) || 1), seen);
-      }
-      const gradient = cs.backgroundImage;
-      if (gradient && gradient !== 'none') {
-        const stops = gradient.match(COLOUR_FN_RE) || [];
-        for (const m of stops) add(m, (area * 0.8) / stops.length, seen);
-      }
-      for (const prop of ['boxShadow', 'textShadow']) {
-        const v = cs[prop];
-        if (v && v !== 'none') for (const m of v.match(COLOUR_FN_RE) || []) add(m, 40, seen);
-      }
-    }
-
-    const { variables, blockedSheets } = scanVariables();
-    const colours = [...counts.values()].sort((a, b) => b.weight - a.weight);
-    return {
-      brand: brand(colours),
-      colours: colours.slice(0, MAX_COLOURS),
-      totalColours: colours.length,
-      variables,
-      blockedSheets,
-      scanned,
-      truncated: all.length > scanned,
-    };
-  }
-
-  // ---------- brand colours ----------
-
-  function hsl({ r, g, b }) {
-    const max = Math.max(r, g, b) / 255, min = Math.min(r, g, b) / 255;
-    const l = (max + min) / 2;
-    const d = max - min;
-    const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
-    return { s, l, chroma: d };
-  }
+  // ---------- colour maths ----------
 
   function lab({ r, g, b }) {
     const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
@@ -126,11 +46,10 @@
     const z = f((R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883);
     return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
   }
-
   const deltaE = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
-  // Ranks by score, folding near-duplicates into whichever was chosen first, and skips anything
-  // that reads the same as a colour already taken by an earlier tier.
+  // Ranks by score, folding near-duplicates into whichever ranked first, and skipping anything
+  // that reads the same as a colour already taken.
   function pickDistinct(list, limit, score, taken = []) {
     const out = [];
     for (const c of [...list].sort((a, b) => score(b) - score(a))) {
@@ -143,26 +62,200 @@
     return out.sort((a, b) => b.merged - a.merged).slice(0, limit);
   }
 
-  function brand(colours) {
-    const opaque = colours.filter((c) => c.a >= 0.5);
-    const isVivid = (c) => {
-      const { s, l, chroma } = hsl(c);
-      return chroma >= MIN_CHROMA && s >= MIN_SATURATION && l >= MIN_LIGHTNESS && l <= MAX_LIGHTNESS;
-    };
-    const isPale = (c) => hsl(c).l > PALE_LIGHTNESS;
-    // Vivid colours win on paint, nudged by how vivid they are.
-    const vividScore = (c) => c.weight * (0.4 + hsl(c).chroma);
+  // ---------- scan ----------
 
-    const picked = pickDistinct(opaque.filter((c) => isVivid(c) && !isPale(c)), 3, vividScore);
-    if (picked.length < 3) {
-      picked.push(...pickDistinct(opaque.filter((c) => isVivid(c) && isPale(c)), 3 - picked.length, vividScore, picked));
+  function scan() {
+    const counts = new Map();
+    const add = (c, weight, seen) => {
+      if (!c || c.a === 0 || !(weight > 0)) return;
+      const key = TGColor.toHex(c);
+      if (seen) { if (seen.has(key)) return; seen.add(key); }
+      const w = weight * c.a;
+      const entry = counts.get(key);
+      if (entry) { entry.count++; entry.weight += w; }
+      else counts.set(key, { r: c.r, g: c.g, b: c.b, a: c.a, count: 1, weight: w });
+    };
+    const addValue = (value, weight, seen) => add(TGColor.parse(value), weight, seen);
+
+    // Visible coverage: each painted box owns its area minus whatever painted boxes sit inside it,
+    // so a page background hidden under full-width sections doesn't count as "most used".
+    const docEl = document.documentElement;
+    const body = document.body;
+    const docArea = Math.max(docEl.scrollWidth, innerWidth) * Math.max(docEl.scrollHeight, body?.scrollHeight || 0, innerHeight);
+    const htmlBg = TGColor.parse(getComputedStyle(docEl).backgroundColor);
+    const bodyBg = body ? TGColor.parse(getComputedStyle(body).backgroundColor) : null;
+    // CSS paints the canvas with html's background, or body's if html has none, or white.
+    const canvasColour = htmlBg?.a > 0 ? htmlBg : bodyBg?.a > 0 ? bodyBg : { r: 255, g: 255, b: 255, a: 1 };
+    const rootBox = { colours: [canvasColour], area: docArea };
+    const boxes = [rootBox];
+    const painted = new Map();
+    if (body && htmlBg?.a > 0 && bodyBg?.a > 0) {
+      const r = body.getBoundingClientRect();
+      const box = { colours: [bodyBg], area: r.width * r.height };
+      rootBox.area = Math.max(0, rootBox.area - box.area);
+      boxes.push(box);
+      painted.set(body, box);
     }
-    // A black-and-white site still gets three answers, marked as neutrals.
-    if (picked.length < 3) {
-      const neutrals = pickDistinct(opaque.filter((c) => !isVivid(c)), 3 - picked.length, (c) => c.weight, picked);
-      picked.push(...neutrals.map((n) => ({ ...n, neutral: true })));
+    const behindOf = (el) => {
+      for (let p = el.parentElement; p; p = p.parentElement) if (painted.has(p)) return painted.get(p);
+      return rootBox;
+    };
+
+    const buttons = [];
+    const all = body ? body.getElementsByTagName('*') : [];
+    let scanned = 0;
+    for (const el of all) {
+      if (scanned >= MAX_ELEMENTS) break;
+      if (SKIP.has(el.localName)) continue;
+      scanned++;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') continue;
+      const r = el.getBoundingClientRect();
+      const area = r.width * r.height;
+      const seen = new Set();
+
+      const bg = TGColor.parse(cs.backgroundColor);
+      const stops = cs.backgroundImage && cs.backgroundImage !== 'none' ? (cs.backgroundImage.match(COLOUR_FN_RE) || []).map((s) => TGColor.parse(s)).filter(Boolean) : [];
+      if ((bg && bg.a > 0) || stops.length) {
+        const behind = behindOf(el);
+        const box = { colours: stops.length ? stops : [bg], area };
+        behind.area = Math.max(0, behind.area - area);
+        boxes.push(box);
+        painted.set(el, box);
+      }
+
+      const chars = ownText(el);
+      if (chars) {
+        const size = parseFloat(cs.fontSize) || 16;
+        addValue(cs.color, chars * size * size * TEXT_INK, seen);
+      }
+      for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
+        const width = parseFloat(cs[`border${side}Width`]);
+        if (width > 0 && cs[`border${side}Style`] !== 'none') {
+          addValue(cs[`border${side}Color`], width * (side === 'Top' || side === 'Bottom' ? r.width : r.height), seen);
+        }
+      }
+      if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) addValue(cs.outlineColor, parseFloat(cs.outlineWidth) * (r.width + r.height) * 2, seen);
+      if (SHAPES.has(el.localName)) {
+        if (cs.fill && cs.fill !== 'none' && !cs.fill.startsWith('url')) addValue(cs.fill, area * 0.6, seen);
+        if (cs.stroke && cs.stroke !== 'none' && !cs.stroke.startsWith('url')) addValue(cs.stroke, (r.width + r.height) * 2 * (parseFloat(cs.strokeWidth) || 1), seen);
+      }
+      for (const prop of ['boxShadow', 'textShadow']) {
+        const v = cs[prop];
+        if (v && v !== 'none') for (const m of v.match(COLOUR_FN_RE) || []) addValue(m, 40, seen);
+      }
+
+      if (isButtonLike(el, cs)) {
+        const candidate = ctaCandidate(el, cs, r, behindOf);
+        if (candidate) buttons.push(candidate);
+      }
     }
-    return picked.map(({ r, g, b, a, neutral }, i) => ({ r, g, b, a, neutral: !!neutral, role: ROLES[i] }));
+
+    for (const box of boxes) {
+      const share = box.area / box.colours.length;
+      for (const c of box.colours) add(c, share);
+    }
+
+    const { variables, blockedSheets } = scanVariables();
+    const colours = [...counts.values()].sort((a, b) => b.weight - a.weight);
+    return {
+      brand: roles(colours, buttons),
+      colours: colours.slice(0, MAX_COLOURS),
+      totalColours: colours.length,
+      buttons: buttons.length,
+      variables,
+      blockedSheets,
+      scanned,
+      truncated: all.length > scanned,
+    };
+  }
+
+  // ---------- call to action ----------
+
+  function isButtonLike(el, cs) {
+    const tag = el.localName;
+    if (tag === 'button' || el.getAttribute('role') === 'button') return true;
+    if (tag === 'input') return /^(submit|button)$/i.test(el.type);
+    if (tag === 'a') {
+      // Links styled as buttons: laid out as a box (many size buttons by height, not padding),
+      // or inline with real padding on both axes.
+      if (cs.display !== 'inline') return true;
+      const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+      const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+      return padX >= 16 && padY >= 6;
+    }
+    return false;
+  }
+
+  // The colour a button shows. Many design systems paint it on an inner <span> that fills the
+  // button, so if the element itself is unpainted, look at a child covering most of it.
+  function paintedColour(el, cs, r) {
+    const own = buttonColour(cs);
+    if (own) return own;
+    for (const child of el.children) {
+      const cr = child.getBoundingClientRect();
+      if (cr.width * cr.height < r.width * r.height * 0.8) continue;
+      const inner = buttonColour(getComputedStyle(child));
+      if (inner) return inner;
+    }
+    return null;
+  }
+
+  // Fill, a gradient's first stop, or for an outline button its border.
+  function buttonColour(cs) {
+    const bg = TGColor.parse(cs.backgroundColor);
+    if (bg && bg.a >= 0.5) return { c: bg, outline: false };
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+      const stop = TGColor.parse((cs.backgroundImage.match(COLOUR_FN_RE) || [])[0]);
+      if (stop && stop.a >= 0.5) return { c: stop, outline: false };
+    }
+    if (parseFloat(cs.borderTopWidth) >= 1 && cs.borderTopStyle !== 'none') {
+      const border = TGColor.parse(cs.borderTopColor);
+      if (border && border.a >= 0.5) return { c: border, outline: true };
+    }
+    return null;
+  }
+
+  function ctaCandidate(el, cs, r, behindOf) {
+    if (r.width < 56 || r.width > 720 || r.height < 24 || r.height > 110) return null;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return null;
+    if (el.closest(CONSENT_UI)) return null;
+    const label = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 80);
+    if (!label || NOT_CTA_WORDS.test(label)) return null;
+    const colour = paintedColour(el, cs, r);
+    if (!colour) return null;
+    // It has to stand out from what's behind it, or it isn't a call to action.
+    const behind = behindOf(el).colours[0];
+    if (deltaE(lab(colour.c), lab(behind)) < MERGE_DELTA_E) return null;
+
+    const aboveFold = r.top + scrollY < innerHeight;
+    const score = Math.sqrt(r.width * r.height)
+      * (aboveFold ? 2 : 1)
+      * (ACTION_WORDS.test(label) ? 2 : 1)
+      * (colour.outline ? 0.4 : 1);
+    return { ...colour.c, score, label };
+  }
+
+  // ---------- roles ----------
+
+  function roles(colours, buttons) {
+    const opaque = colours.filter((c) => c.a >= 0.5);
+    if (!opaque.length) return [];
+    const byWeight = (c) => c.weight;
+
+    const primary = pickDistinct(opaque, 1, byWeight)[0];
+    const out = [{ ...primary, role: 'Primary', note: 'Most used' }];
+
+    // Buttons of the same colour add up: consistency is what makes a colour the CTA.
+    const cta = pickDistinct(buttons, 1, (b) => b.score, out)[0];
+    if (cta) out.push({ ...cta, role: 'Secondary', note: 'Buttons', cta: true });
+
+    const rest = pickDistinct(opaque, 3 - out.length, byWeight, out);
+    for (const c of rest) {
+      const role = out.length === 1 ? 'Secondary' : 'Tertiary';
+      out.push({ ...c, role, note: role === 'Secondary' ? 'Second most used' : 'Third most used' });
+    }
+    return out.map(({ r, g, b, a, role, note, cta: isCta }) => ({ r, g, b, a, role, note, cta: !!isCta }));
   }
 
   // ---------- CSS variables ----------

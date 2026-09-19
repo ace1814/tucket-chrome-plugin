@@ -36,7 +36,6 @@
     { id: 'svg', label: 'SVG', icon: I.svg },
   ];
 
-
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const isMac = () => /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
   const frames = (n = 2) => new Promise((r) => { const step = (k) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); });
@@ -211,7 +210,7 @@
       clearTarget();
       render();
       if (tab === 'colour' && !s.palette) setTimeout(() => { s.palette = tg.palette.scan(); render(); }, 30);
-      if (tab === 'font' && !s.fonts) setTimeout(() => { s.fonts = tg.fonts.scan(); render(); }, 30);
+      if (tab === 'font' && !s.fonts) setTimeout(() => { s.fonts = tg.fonts.scan(); render(); lookupFonts(); }, 30);
     }
 
     function render() {
@@ -249,6 +248,38 @@
 
     // ---------- Font ----------
 
+    // Where to get the font: straight from where the page loads it, else what Fontsource knows.
+    const plus = (name) => encodeURIComponent(name).replace(/%20/g, '+');
+    const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    function fontLink(f) {
+      const q = encodeURIComponent(f.family);
+      let link = null;
+      switch (f.source) {
+        case 'google': link = ['Download free', `https://fonts.google.com/specimen/${plus(f.family)}`]; break;
+        case 'fontshare': link = ['Download free', `https://www.fontshare.com/fonts/${slug(f.family)}`]; break;
+        case 'adobe': link = ['Adobe Fonts', `https://fonts.adobe.com/search?query=${q}`]; break;
+        case 'monotype': link = ['Buy on MyFonts', `https://www.myfonts.com/search?query=${q}`]; break;
+        case 'self':
+        case 'unknown': {
+          const hit = s.fontLookup?.[f.family];
+          if (!hit) break;
+          if (!hit.found) link = ['Find to buy', `https://www.myfonts.com/search?query=${q}`];
+          else if (hit.type === 'google') link = ['Download free', `https://fonts.google.com/specimen/${plus(hit.family)}`];
+          else link = ['Download free', `https://fontsource.org/fonts/${hit.id}`];
+          break;
+        }
+      }
+      return link ? `<a class="pill go" href="${esc(link[1])}" target="_blank" rel="noopener noreferrer">${link[0]} ↗</a>` : '';
+    }
+
+    function lookupFonts() {
+      const families = (s.fonts?.used || []).filter((f) => f.source === 'self' || f.source === 'unknown').map((f) => f.family);
+      if (!families.length) return;
+      chrome.runtime.sendMessage({ type: 'fonts:lookup', families })
+        .then((found) => { s.fontLookup = found || {}; if (s.tab === 'font') render(); })
+        .catch(() => {});
+    }
+
     function viewFont() {
       const inspectRow = `
         <div class="inspect-row">
@@ -258,7 +289,7 @@
       if (!s.fonts) return `${inspectRow}<div class="fonts">${skeletons(3, 70)}</div>`;
       const { used } = s.fonts;
       if (!used.length) return `${inspectRow}<p class="note">No text on this page.</p>`;
-      const kinds = { web: 'Web font', system: 'Installed', generic: 'System' };
+      const sources = { google: 'Google Fonts', adobe: 'Adobe Fonts', monotype: 'Monotype', fontshare: 'Fontshare', self: 'Web font', unknown: 'Web font', installed: 'Installed', default: 'System' };
       return `${inspectRow}
         <div class="label">${used.length} ${used.length === 1 ? 'family' : 'families'} on this page</div>
         <div class="fonts">
@@ -268,11 +299,12 @@
             return `<div class="font">
               <button class="main" data-copy="${copyId(f.family)}" title="Copy “${esc(f.family)}”">
                 <div class="sample" data-family="${esc(stack)}" data-weight="${esc(weight)}">${esc(f.family)}</div>
-                <div class="meta"><span class="badge">${kinds[f.kind]}</span><span>${esc(f.weights.join(' · '))}</span><span>· ${f.elements} ${f.elements === 1 ? 'use' : 'uses'}</span></div>
+                <div class="meta"><span class="badge">${sources[f.source] || 'Web font'}</span><span>${esc(f.weights.join(' · '))}</span><span>· ${f.elements} ${f.elements === 1 ? 'use' : 'uses'}</span></div>
               </button>
               <div class="more">
                 <button class="pill" data-copy="${copyId(f.line)}" title="${esc(f.line)}">Copy style</button>
                 <button class="pill" data-copy="${copyId(f.css)}">Copy CSS</button>
+                ${fontLink(f)}
               </div>
             </div>`;
           }).join('')}
@@ -304,7 +336,7 @@
           const v = swatchValue(c);
           return `<button class="sw" data-copy="${copyId(v)}" title="Copy ${esc(v)}">
             <div class="chip" data-bg="${TGColor.toRgb(c)}"></div>
-            <div class="meta"><div class="role">${c.neutral ? 'Neutral' : c.role}</div><div class="val">${esc(v)}</div></div>
+            <div class="meta"><div class="role" title="${esc(c.note || '')}">${c.cta ? 'Secondary · CTA' : c.role}</div><div class="val">${esc(v)}</div></div>
           </button>`;
         }).join('')}</div>`;
       }

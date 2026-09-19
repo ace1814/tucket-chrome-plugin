@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Black CTA page</title>
+<!-- Like Vercel or Notion: white page, black buttons. A loud cookie button must not win the CTA,
+     and the light-grey section must not count as a separate colour from white. -->
+<style>
+  body { margin: 0; font: 16px/1.6 system-ui, sans-serif; color: #1a1a1a; background: #ffffff; }
+  header { display: flex; align-items: center; gap: 24px; padding: 16px 32px; }
+  header .logo { font-weight: 700; margin-right: auto; }
+  header a { color: #1a1a1a; text-decoration: none; }
+  .btn { display: inline-block; padding: 10px 20px; border-radius: 8px; background: #000000; color: #ffffff; text-decoration: none; font-weight: 600; }
+  .btn.ghost { background: transparent; color: #000; border: 1px solid #000; }
+  .hero { padding: 120px 32px; text-align: center; }
+  .hero h1 { font-size: 56px; margin: 0 0 24px; }
+  .hero .actions { display: flex; gap: 12px; justify-content: center; }
+  .band { background: #fde68a; padding: 120px 32px; }
+  .grey { background: #f7f7f7; padding: 200px 32px; }
+  p a { color: #2563eb; }
+  .cookie { position: fixed; left: 16px; right: 16px; bottom: 16px; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.15); padding: 16px; border-radius: 12px; display: flex; gap: 12px; align-items: center; }
+  .cookie button { background: #ec4899; color: #fff; border: 0; padding: 12px 28px; border-radius: 8px; font-size: 16px; font-weight: 700; }
+</style>
+</head>
+<body>
+  <header><span class="logo">Acme</span><a href="#">Docs</a><a href="#">Pricing</a><a class="btn" href="#">Sign up</a></header>
+  <section class="hero">
+    <h1>Ship faster</h1>
+    <div class="actions"><a class="btn" href="#">Get started</a><a class="btn ghost" href="#">Learn more</a></div>
+  </section>
+  <section class="band"><p>A yellow feature band with a <a href="#">blue link</a>.</p></section>
+  <section class="grey"><p>A very light grey section.</p></section>
+  <div class="cookie"><span>We use cookies.</span><button>Accept all cookies</button></div>
+</body>
+</html>

@@ -191,6 +191,8 @@ svg { display: block; flex: none; }
 .font .more { display: flex; gap: 6px; margin-top: 8px; }
 .pill { height: 26px; padding: 0 10px; border-radius: 999px; background: var(--raised); font-size: 11.5px; font-weight: 600; box-shadow: 0 0 0 .5px var(--hair), inset 0 1px 0 var(--rim-hi); transition: transform .15s; }
 .pill:active { transform: scale(.95); }
+a.pill { display: inline-flex; align-items: center; }
+.pill.go { color: var(--accent); margin-left: auto; }
 .inspect-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 20px; background: var(--fill); margin-bottom: 10px; }
 .inspect-row .t { flex: 1; }
 .inspect-row b { display: block; font-weight: 600; }
