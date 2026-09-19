@@ -1,0 +1,6 @@
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: #24292f; background: #ffffff; }
+.top { background: #24292f; color: #fff; padding: 16px 24px; font-weight: 600; }
+main { padding: 32px 24px; }
+h1 { font-size: 32px; margin: 0 0 12px; }
+.cta { background: #1f883d; color: #fff; border: 0; padding: 10px 18px; border-radius: 8px; font-size: 15px; }
+.icon { width: 32px; height: 32px; fill: #cf222e; display: block; margin-top: 24px; }

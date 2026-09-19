@@ -13,20 +13,29 @@
       const host = document.createElement('tucket-grab');
       host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;cursor:crosshair;';
       const root = host.attachShadow({ mode: 'closed' });
+      // adoptedStyleSheets, not <style>: strict-CSP pages block injected style tags.
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(`
+        :host { all: initial; }
+        .shade { position: fixed; inset: 0; background: rgba(12, 12, 20, .32); }
+        .rect { position: fixed; border-radius: 6px; border: 1.5px solid rgba(255,255,255,.95);
+                box-shadow: 0 0 0 100vmax rgba(12,12,20,.32), 0 0 0 .5px rgba(0,0,0,.25), inset 0 0 0 .5px rgba(0,0,0,.2); display: none; }
+        .pill { position: fixed; pointer-events: none; color: #1d1d1f; white-space: nowrap;
+                font: 600 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: -.005em;
+                background: rgba(252,252,254,.66); -webkit-backdrop-filter: blur(24px) saturate(190%); backdrop-filter: blur(24px) saturate(190%);
+                box-shadow: 0 0 0 .5px rgba(0,0,0,.1), 0 10px 30px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.9);
+                border-radius: 999px; }
+        .hint { top: 18px; left: 50%; transform: translateX(-50%); padding: 11px 18px; }
+        .hint span { color: rgba(60,60,67,.6); font-weight: 500; }
+        .size { padding: 6px 10px; font: 600 11.5px/1 ui-monospace, "SF Mono", Menlo, monospace; display: none; }
+        @media (prefers-color-scheme: dark) {
+          .pill { color: #f5f5f7; background: rgba(40,40,46,.62); box-shadow: 0 0 0 .5px rgba(0,0,0,.6), 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.3); }
+          .hint span { color: rgba(235,235,245,.6); }
+        }`);
+      root.adoptedStyleSheets = [sheet];
       root.innerHTML = `
-        <style>
-          :host { all: initial; }
-          .shade { position: fixed; inset: 0; background: rgba(15, 15, 25, .35); }
-          .rect { position: fixed; border: 1.5px solid #fff; box-shadow: 0 0 0 100vmax rgba(15,15,25,.35);
-                  outline: 1px solid rgba(0,0,0,.3); display: none; }
-          .hint { position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
-                  font: 500 13px/1.2 system-ui, -apple-system, sans-serif; color: #fff; background: rgba(20,20,28,.88);
-                  padding: 8px 12px; border-radius: 8px; pointer-events: none; }
-          .size { position: fixed; font: 500 11px/1 ui-monospace, monospace; color: #fff; background: rgba(20,20,28,.88);
-                  padding: 4px 6px; border-radius: 4px; display: none; pointer-events: none; }
-        </style>
-        <div class="shade"></div><div class="rect"></div><div class="size"></div>
-        <div class="hint">Drag to select an area · Esc to cancel</div>`;
+        <div class="shade"></div><div class="rect"></div><div class="pill size"></div>
+        <div class="pill hint">Drag to select an area <span>· Esc to cancel</span></div>`;
       const shade = root.querySelector('.shade');
       const rectEl = root.querySelector('.rect');
       const sizeEl = root.querySelector('.size');

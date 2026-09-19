@@ -436,6 +436,105 @@
     return { items, total: items.length, capped: items.length >= MAX_ITEMS };
   }
 
+  // ---------- pick mode: the SVG under the cursor ----------
+
+  // Tucket's own icon rule (TucketCore/SVGIconDetector), so the label matches where the clip lands.
+  const ICON_MAX_SIDE = 512;
+  const ICON_ASPECT = [0.75, 1.34];
+  const ICON_MAX_BYTES = 20_000;
+
+  function geometry(markup) {
+    const tag = markup.slice(0, markup.indexOf('>') + 1);
+    const attr = (name) => tag.match(new RegExp(`\\s${name}=["']([^"']*)["']`))?.[1];
+    const vb = attr('viewBox')?.split(/[\s,]+/).map(Number);
+    if (vb?.length === 4 && vb[2] > 0 && vb[3] > 0) return { w: vb[2], h: vb[3] };
+    const w = parseFloat(attr('width')), h = parseFloat(attr('height'));
+    return w > 0 && h > 0 ? { w, h } : null;
+  }
+
+  function kindOf(markup, bytes) {
+    const g = geometry(markup);
+    if (!g || bytes > ICON_MAX_BYTES || Math.max(g.w, g.h) > ICON_MAX_SIDE) return 'SVG';
+    const aspect = g.w / g.h;
+    return aspect >= ICON_ASPECT[0] && aspect <= ICON_ASPECT[1] ? 'Icon' : 'SVG';
+  }
+
+  function cssSvgUrl(el) {
+    for (const pseudo of [null, '::before', '::after']) {
+      const cs = getComputedStyle(el, pseudo);
+      if (pseudo && cs.content === 'none') continue;
+      for (const value of [cs.backgroundImage, cs.maskImage, cs.webkitMaskImage, pseudo ? cs.content : '']) {
+        if (!value || !value.includes('url(')) continue;
+        for (const m of value.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/g)) if (isSvgUrl(m[2])) return m[2];
+      }
+    }
+    return null;
+  }
+
+  /** The grabbable SVG at this element, climbing a few levels: { el, type, url? } or null. */
+  function targetAt(start) {
+    if (!(start instanceof Element)) return null;
+    const svg = start.closest('svg');
+    if (svg) {
+      let root = svg;
+      while (root.parentElement?.closest('svg')) root = root.parentElement.closest('svg');
+      return { el: root, type: 'inline' };
+    }
+    let node = start;
+    for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
+      if (node === document.body || node === document.documentElement) break;
+      if (node.localName === 'img') {
+        const src = node.currentSrc || node.src;
+        if (isSvgUrl(src)) return { el: node, type: 'file', url: src };
+      }
+      if (node.localName === 'object' || node.localName === 'embed') {
+        const src = node.data || node.src || node.getAttribute('data') || node.getAttribute('src');
+        if (isSvgUrl(src) || node.type === 'image/svg+xml') return { el: node, type: 'object', url: src };
+      }
+      const url = cssSvgUrl(node);
+      if (url) return { el: node, type: 'file', url };
+    }
+    return null;
+  }
+
+  /** Serialise a target from targetAt(). { markup, name, kind, w, h, bytes } or { error, url }. */
+  async function grab(target) {
+    let markup = null;
+    let name = '';
+    if (target.type === 'inline') {
+      markup = await serializeInline(target.el);
+      name = target.el.getAttribute('aria-label') || target.el.querySelector('title')?.textContent || '';
+    } else {
+      if (target.type === 'object') {
+        let root = null;
+        try { root = target.el.contentDocument?.documentElement; } catch { root = null; }
+        if (root?.localName === 'svg') markup = await serializeInline(root);
+      }
+      if (!markup && target.url) {
+        const abs = new URL(target.url, document.baseURI).href;
+        const text = await fetchText(abs);
+        markup = text ? sanitizeFile(text) : null;
+        if (!abs.startsWith('data:')) {
+          try { name = decodeURIComponent(new URL(abs).pathname.split('/').pop() || '').replace(/\.svg$/i, ''); } catch { /* keep */ }
+        }
+      }
+      if (!markup) return { error: 'unreadable', url: target.url?.startsWith('data:') ? null : target.url };
+    }
+    const bytes = new Blob([markup]).size;
+    const g = geometry(markup);
+    return { markup, name: name.trim().slice(0, 60), kind: kindOf(markup, bytes), w: g?.w || 0, h: g?.h || 0, bytes };
+  }
+
+  /** Label for the hover outline, without serialising: "Icon · 24×24"-ish from the element. */
+  function describeTarget(target) {
+    const r = target.el.getBoundingClientRect();
+    const vb = target.type === 'inline' ? target.el.viewBox?.baseVal : null;
+    const w = vb?.width || r.width, h = vb?.height || r.height;
+    const aspect = w / h;
+    const icon = Math.max(w, h) <= ICON_MAX_SIDE && aspect >= ICON_ASPECT[0] && aspect <= ICON_ASPECT[1];
+    return `${icon ? 'Icon' : 'SVG'} · ${Math.round(w)}×${Math.round(h)}`;
+  }
+
   // ---------- highlight ----------
 
   let box = null;
@@ -470,5 +569,5 @@
     return true;
   }
 
-  tg.svgs = { scan, highlight };
+  tg.svgs = { scan, highlight, targetAt, grab, describeTarget };
 })();

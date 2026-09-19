@@ -1,6 +1,13 @@
-// Service worker. Owns screenshots, because they outlive the popup: the popup closes the moment
-// the user clicks the page, but a ten-screen capture takes five seconds.
+// Service worker. Opens the in-page panel from the toolbar, runs screenshots (they need
+// captureVisibleTab, which only extension contexts have), and talks to Tucket over the bridge.
 import { putCapture, pruneCaptures } from './lib/idb.js';
+import * as tucket from './lib/tucket.js';
+
+const PANEL_FILES = [
+  'src/shared/color.js', 'src/shared/send.js', 'src/shared/fonts.js',
+  'src/content/palette.js', 'src/content/fonts.js', 'src/content/svgs.js',
+  'src/content/panel-css.js', 'src/content/panel.js',
+];
 
 const CAPTURE_GAP_MS = 520;      // Chrome allows two captureVisibleTab calls per second.
 const SETTLE_MS = 160;           // Let the page repaint after a scroll before capturing.
@@ -18,16 +25,46 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('src/welcome/welcome.html') });
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// ---------- toolbar → panel ----------
+
+chrome.action.onClicked.addListener((tab) => togglePanel(tab));
+
+async function togglePanel(tab) {
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => (globalThis.__tg?.panel ? globalThis.__tg.panel.toggle() : 'missing'),
+    });
+    if (probe?.result !== 'missing') return;
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: PANEL_FILES });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => globalThis.__tg.panel.open() });
+  } catch {
+    // chrome://, the Web Store, the new tab page: nothing can be injected, so explain in a popup.
+    // blocked.html clears this per-tab popup again, so the next click on a normal page works.
+    await chrome.action.setPopup({ tabId: tab.id, popup: 'src/blocked/blocked.html' });
+    await chrome.action.openPopup({ windowId: tab.windowId }).catch(() => {});
+  }
+}
+
+// The automated tests can't click the toolbar, so they call the same handler.
+globalThis.tucketGrab = { togglePanel };
+
+// ---------- messages ----------
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg?.type) {
-    case 'shot:start':
+    case 'shot:start': {
+      const tabId = msg.tabId ?? sender.tab?.id;
       if (job) {
         sendResponse({ ok: false, error: 'A capture is already running.' });
+      } else if (tabId == null) {
+        sendResponse({ ok: false, error: 'No page to capture.' });
       } else {
         sendResponse({ ok: true });
-        runShot(msg);
+        runShot({ mode: msg.mode, tabId });
       }
       return;
+    }
     case 'shot:cancel':
       if (job) job.cancelled = true;
       sendResponse({ ok: true });
@@ -35,15 +72,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case 'shot:status':
       sendResponse({ progress: job ? job.progress : null });
       return;
+    case 'tucket:status':
+      tucket.status({ fresh: !!msg.fresh }).then(sendResponse);
+      return true;
+    case 'tucket:send':
+      sendToTucket(msg, sender).then(sendResponse);
+      return true;
+    case 'tool:start':
+      sendResponse({ ok: false, error: 'This arrives with Tucket 1.3.8.' });
+      return;
   }
 });
+
+async function sendToTucket({ kind, data, pageUrl, pageTitle }, sender) {
+  const s = await tucket.status();
+  if (s.state !== 'connected') return { ok: false };
+  try {
+    await tucket.request('ingest', {
+      kind, data,
+      pageUrl: pageUrl || sender.tab?.url || '',
+      pageTitle: pageTitle || sender.tab?.title || '',
+    });
+    return { ok: true };
+  } catch (err) {
+    tucket.forget();
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
 
 // ---------- plumbing ----------
 
 function report(progress) {
   if (job) job.progress = progress;
-  chrome.runtime.sendMessage({ type: 'shot:progress', progress }).catch(() => {});
   const tabId = job?.tabId;
+  chrome.runtime.sendMessage({ type: 'shot:progress', progress }).catch(() => {});
+  if (tabId != null) chrome.tabs.sendMessage(tabId, { type: 'shot:progress', progress }).catch(() => {});
   if (!tabId) return;
   if (progress.phase === 'capturing' && progress.total > 1) {
     chrome.action.setBadgeBackgroundColor({ color: '#6C6CF8', tabId });

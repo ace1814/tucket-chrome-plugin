@@ -30,10 +30,12 @@ function download(name, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+let captureMeta = {};
+
 async function sendPng(blob) {
   try {
-    await TGSend.png(blob);
-    toast(await TGSend.doneMessage());
+    const { via } = await TGSend.send('png', blob, captureMeta);
+    toast(TGSend.doneMessage(via, 1, await TGSend.hasTucket()));
   } catch (err) {
     toast('Couldn’t copy the image — click the page and try again');
     console.error(err);
@@ -50,6 +52,7 @@ async function boot() {
   }
 
   const { parts, notes = [] } = capture;
+  captureMeta = { pageUrl: capture.pageUrl, pageTitle: capture.pageTitle };
   const labels = { full: 'Full page', visible: 'Visible area', region: 'Selected region' };
   document.title = `${capture.pageTitle || 'Screenshot'} — Tucket Grab`;
   $('#page-title').textContent = capture.pageTitle || capture.pageUrl || 'Screenshot';

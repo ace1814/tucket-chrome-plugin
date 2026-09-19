@@ -1,12 +1,10 @@
-// The one promotional surface: a single quiet line. Never a modal, never a new tab.
-// v1 can't detect Tucket, so it asks once; the answer only changes wording and hides the CTA.
-// Classic script; defines globalThis.TGFooter.
+// The one promotional line on extension pages (capture result, welcome). Tucket is detected over
+// the bridge, so there's nothing to ask: connected users see their status, everyone else one
+// quiet link. Never a modal, never a new tab. Classic script; defines globalThis.TGFooter.
 (() => {
   if (globalThis.TGFooter) return;
 
   const SITE = 'https://trytucket.com/';
-  const mounted = new Map(); // element → utm_medium
-
   const ctaUrl = (medium) => `${SITE}?utm_source=chrome-extension&utm_medium=${encodeURIComponent(medium)}&utm_campaign=grab`;
   const isMac = () => /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
@@ -16,45 +14,22 @@
     return el;
   }
 
-  async function setHasTucket(value) {
-    if (value == null) await chrome.storage.local.remove('hasTucket');
-    else await chrome.storage.local.set({ hasTucket: value });
-  }
-
-  async function render(el, medium) {
-    const { hasTucket } = await chrome.storage.local.get('hasTucket');
-    const cta = h('a', { className: 'tg-cta', href: ctaUrl(medium), target: '_blank', rel: 'noopener', textContent: 'Get Tucket for Mac →' });
+  async function mount(el, medium) {
+    let status = { state: 'missing' };
+    try { status = (await chrome.runtime.sendMessage({ type: 'tucket:status' })) || status; } catch { /* keep */ }
     el.replaceChildren();
-
-    if (!isMac()) {
-      el.append(h('span', { className: 'tg-muted', textContent: 'Tucket is Mac-only — captures still copy and download.' }));
-    } else if (hasTucket === true) {
-      el.append(
-        h('span', { className: 'tg-muted', textContent: 'Tucket saves what you send, via the clipboard.' }),
-        h('button', { className: 'tg-link', type: 'button', textContent: 'Change', onclick: () => setHasTucket(null) }),
-      );
-    } else if (hasTucket === false) {
-      el.append(cta);
+    if (status.state === 'connected') {
+      el.append(h('span', { className: 'tg-on' }), h('span', { className: 'tg-muted', textContent: `Connected to Tucket ${status.version || ''}`.trim() }));
+    } else if (!isMac()) {
+      el.append(h('span', { className: 'tg-muted', textContent: 'Tucket is Mac-only — everything here still copies and downloads.' }));
     } else {
       el.append(
-        h('span', { className: 'tg-ask' },
-          h('span', { className: 'tg-muted', textContent: 'Already have Tucket?' }),
-          h('button', { className: 'tg-link', type: 'button', textContent: 'Yes', onclick: () => setHasTucket(true) }),
-          h('button', { className: 'tg-link', type: 'button', textContent: 'No', onclick: () => setHasTucket(false) }),
-        ),
-        cta,
+        h('span', { className: 'tg-muted', textContent: 'Everything you grab can land in Tucket.' }),
+        h('a', { className: 'tg-cta', href: ctaUrl(medium), target: '_blank', rel: 'noopener', textContent: 'Get Tucket for Mac →' }),
       );
     }
+    return status;
   }
-
-  function mount(el, medium) {
-    mounted.set(el, medium);
-    return render(el, medium);
-  }
-
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && 'hasTucket' in changes) for (const [el, medium] of mounted) render(el, medium);
-  });
 
   globalThis.TGFooter = { mount, ctaUrl };
 })();

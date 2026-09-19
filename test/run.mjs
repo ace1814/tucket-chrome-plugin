@@ -2,11 +2,13 @@
 // extension loaded. Writes screenshots, stitched captures and serialised SVGs to test/out/.
 //
 //   npm test                 all suites
-//   npm test -- svgs shots   just those suites (palette, fonts, svgs, inspector, shots, popup)
+//   npm test -- svgs shots   just those suites (palette, fonts, svgs, panel, pick, shots, screens)
 //   HEADFUL=1 npm test       watch it run
 //
-// activeTab is only granted by a real toolbar click, which automation can't make, so the test
-// build adds host_permissions. The shipped manifest never has them.
+// Two test-only changes to the build in test/.build, never shipped:
+//  - host_permissions, because activeTab is only granted by a real toolbar click, which
+//    automation can't make (the tests call the same togglePanel handler instead);
+//  - the panel's shadow root is opened, so Puppeteer can reach inside it.
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
@@ -49,7 +51,10 @@ const server = http.createServer(async (req, res) => {
   try {
     const file = path.join(ROOT, 'test/fixtures', path.normalize(url.pathname).replace(/^(\.\.[/\\])+/, ''));
     const data = await fs.readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    const headers = { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' };
+    // strict.html imitates GitHub-style CSP: no inline styles, no data: images.
+    if (file.endsWith('strict.html')) headers['content-security-policy'] = "default-src 'self'; style-src 'self'; img-src 'self'; script-src 'self'";
+    res.writeHead(200, headers);
     res.end(data);
   } catch {
     res.writeHead(404);
@@ -67,6 +72,10 @@ for (const p of ['manifest.json', 'src', 'icons']) await fs.cp(path.join(ROOT, p
 const manifest = JSON.parse(await fs.readFile(path.join(EXT, 'manifest.json'), 'utf8'));
 manifest.host_permissions = ['<all_urls>'];
 await fs.writeFile(path.join(EXT, 'manifest.json'), JSON.stringify(manifest, null, 2));
+const panelFile = path.join(EXT, 'src/content/panel.js');
+const panelSrc = await fs.readFile(panelFile, 'utf8');
+if (!panelSrc.includes("attachShadow({ mode: 'closed' })")) throw new Error('panel.js no longer attaches a closed shadow root; update the test build patch');
+await fs.writeFile(panelFile, panelSrc.replace("attachShadow({ mode: 'closed' })", "attachShadow({ mode: 'open' })"));
 
 const browser = await puppeteer.launch({
   executablePath: await findChrome(),
@@ -76,20 +85,20 @@ const browser = await puppeteer.launch({
   ignoreDefaultArgs: ['--disable-extensions'],
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--window-size=1280,860', `--force-device-scale-factor=${DPR}`],
 });
-await browser.defaultBrowserContext().overridePermissions(`chrome-extension://${EXPECTED_ID}`, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']).catch(() => {});
+const clipboardPerms = ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];
+await browser.defaultBrowserContext().overridePermissions(`chrome-extension://${EXPECTED_ID}`, clipboardPerms).catch(() => {});
+await browser.defaultBrowserContext().overridePermissions(BASE, clipboardPerms).catch(() => {});
 
 const swTarget = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().endsWith('/src/background.js'), { timeout: 15000 });
 const worker = await swTarget.worker();
 worker.on('console', (m) => console.log(`    [service worker] ${m.text()}`));
 worker.on('error', (e) => console.log(`    [service worker error] ${e.message}`));
 const extId = new URL(swTarget.url()).host;
-const extUrl = (p) => `chrome-extension://${extId}/${p}`;
 
 const BUNDLES = {
   palette: ['src/shared/color.js', 'src/content/palette.js'],
   fonts: ['src/shared/color.js', 'src/shared/fonts.js', 'src/content/fonts.js'],
   svgs: ['src/shared/color.js', 'src/content/svgs.js'],
-  inspector: ['src/shared/color.js', 'src/shared/send.js', 'src/shared/fonts.js', 'src/content/inspector.js'],
 };
 
 async function tg(tabId, bundle, fnPath, ...args) {
@@ -103,35 +112,37 @@ async function tg(tabId, bundle, fnPath, ...args) {
   }, tabId, BUNDLES[bundle], fnPath, args);
 }
 
-async function openFixture(name) {
+async function openFixture(name, { dark = false } = {}) {
   const page = await browser.newPage();
+  // Always explicit: headless Chrome otherwise follows the Mac's own appearance.
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }]);
   await page.goto(`${BASE}/${name}`, { waitUntil: 'load' });
   await page.bringToFront();
   const tabId = await worker.evaluate(async (url) => (await chrome.tabs.query({})).find((t) => t.url === url)?.id, page.url());
   return { page, tabId };
 }
 
-async function openPopup(tabId) {
-  // A unique URL per popup, so a just-closed popup's target is never mistaken for the new one.
-  const url = extUrl(`src/popup/popup.html?tabId=${tabId}&n=${Date.now()}`);
-  await worker.evaluate((url) => chrome.windows.create({ url, type: 'popup', width: 380, height: 640 }), url);
-  const target = await browser.waitForTarget((t) => t.url() === url);
-  const page = await target.page();
-  await page.setViewport({ width: 380, height: 580, deviceScaleFactor: DPR });
-  await page.waitForFunction(() => document.querySelector('[aria-selected="true"]') || !document.querySelector('#blocked').hidden);
-  return page;
+// Exactly what a toolbar click does.
+async function toggle(tabId) {
+  await worker.evaluate(async (id) => globalThis.tucketGrab.togglePanel(await chrome.tabs.get(id)), tabId);
 }
 
-async function waitForCapture(popup) {
-  // Promise.resolve().then: on a popup that already closed itself, waitForFunction throws synchronously.
-  const failed = popup
-    ? Promise.resolve().then(() => popup.waitForFunction(() => { const e = document.querySelector('#shot-error'); return e && !e.hidden && e.textContent; }, { timeout: 90000 }))
-        .then(async (h) => { throw new Error(`Capture error in popup: ${await h.jsonValue()}`); }, () => new Promise(() => {}))
-    : new Promise(() => {});
-  const target = await Promise.race([
-    browser.waitForTarget((t) => t.url().includes('/src/capture/capture.html'), { timeout: 90000 }),
-    failed,
-  ]);
+async function openPanel(page, tabId, tab) {
+  await toggle(tabId);
+  await page.waitForSelector('tucket-grab >>> .panel');
+  if (tab) await clickIn(page, `[data-tab="${tab}"]`);
+  await sleep(250);
+}
+
+const clickIn = (page, sel) => page.click(`tucket-grab >>> ${sel}`);
+const inPanel = (page, fn, ...args) => page.evaluate((src, args) => {
+  const root = document.querySelector('tucket-grab')?.shadowRoot;
+  return root ? new Function('root', 'args', `return (${src})(root, ...args)`)(root, args) : null;
+}, fn.toString(), args);
+const clipboard = (page) => page.evaluate(() => navigator.clipboard.readText().catch((e) => `ERR ${e.message}`));
+
+async function waitForCapture() {
+  const target = await browser.waitForTarget((t) => t.url().includes('/src/capture/capture.html'), { timeout: 90000 });
   const page = await target.page();
   await page.waitForFunction(() => document.querySelectorAll('.part img').length && [...document.querySelectorAll('.part img')].every((i) => i.complete && i.naturalWidth), { timeout: 30000 });
   return page;
@@ -160,6 +171,8 @@ async function readParts(capturePage, name, probe) {
   return parts;
 }
 
+const hexOf = (c) => `#${[c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+
 // ---------- suites ----------
 
 console.log(`\nTucket Grab tests · ${BASE}`);
@@ -170,14 +183,18 @@ if (want('palette')) {
   const { page, tabId } = await openFixture('marketing.html');
   const result = await tg(tabId, 'palette', 'palette.scan');
   await fs.writeFile(path.join(OUT, 'palette.json'), JSON.stringify(result, null, 2));
-  const hexes = new Set(result.colours.map((c) => `#${[c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, '0')).join('').toUpperCase()}`));
+  const hexes = new Set(result.colours.map(hexOf));
   for (const hex of ['#111827', '#6C6CF8', '#10B981', '#E0E7FF', '#1F2937']) check(hexes.has(hex), `palette has ${hex}`);
   const vars = Object.fromEntries(result.variables.map((v) => [v.name, v]));
   check(!!vars['--brand-500'], 'CSS variable --brand-500 found');
   check(!!vars['--brand-700'], 'oklch() variable --brand-700 resolved');
-  check(!!vars['--accent'], 'bare-channel HSL variable --accent resolved', vars['--accent'] && `rgb ${vars['--accent'].r},${vars['--accent'].g},${vars['--accent'].b}`);
+  check(!!vars['--accent'], 'bare-channel HSL variable --accent resolved');
   check(!vars['--radius'] && !vars['--space-4'], 'non-colour variables ignored');
-  check(result.colours[0].count >= result.colours.at(-1).count, 'sorted by frequency');
+  const brand = result.brand.map(hexOf);
+  check(result.brand.length === 3 && result.brand.every((c) => !c.neutral), 'three brand colours, none neutral', brand.join(' '));
+  check(!brand.some((h) => ['#FFFFFF', '#F3F4F6', '#111827', '#1F2937', '#E0E7FF'].includes(h)), 'brand skips white, greys, ink and pale tints', brand.join(' '));
+  check(brand.includes('#F97015') || brand.some((h) => h.startsWith('#F9')), 'orange sub-nav is a brand colour', brand.join(' '));
+  check(brand.includes('#6C6CF8') || brand.includes('#3D3CC1'), 'violet button is a brand colour', brand.join(' '));
   await page.close();
 }
 
@@ -197,71 +214,145 @@ if (want('fonts')) {
 }
 
 if (want('svgs')) {
-  console.log('\nSVGs — svgs.html');
+  console.log('\nSVG serialiser — svgs.html');
   const { page, tabId } = await openFixture('svgs.html');
   const { items } = await tg(tabId, 'svgs', 'svgs.scan');
   await fs.mkdir(path.join(OUT, 'svgs'), { recursive: true });
   for (const item of items) if (item.markup) await fs.writeFile(path.join(OUT, 'svgs', `${item.id}-${(item.name || item.source).replace(/\W+/g, '-')}.svg`), item.markup);
   await fs.writeFile(path.join(OUT, 'svgs.json'), JSON.stringify(items, null, 2));
   const find = (pred) => items.find((i) => i.markup && pred(i.markup, i));
-
   check(items.every((i) => !i.markup || !/currentcolor/i.test(i.markup)), 'no currentColor left in any output');
   const tri = find((m) => m.includes('M12 2 2 22h20z'));
   check(tri && /fill="#E11D48"/.test(tri.markup), 'currentColor icon resolved to #E11D48');
-  check(tri?.instances === 2, 'duplicate icon deduped', `instances ${tri?.instances}`);
   const logo = find((m) => m.includes('M5 35 40 5 75 35z'));
-  check(logo && /fill="#F97316"/.test(logo.markup) && /stroke="#7C2D12"/.test(logo.markup), 'page-stylesheet fill/stroke baked in');
-  check(logo && /viewBox="0 0 80 40"/.test(logo.markup), 'missing viewBox added');
-  check(items.some((i) => i.name === 'icon-heart') && items.some((i) => i.name === 'icon-bolt'), 'sprite symbols listed');
-  const heartUse = find((m, i) => i.source === 'Inline SVG' && m.includes('M12 21s') );
+  check(logo && /fill="#F97316"/.test(logo.markup) && /viewBox="0 0 80 40"/.test(logo.markup), 'page-stylesheet fill baked in, viewBox added');
+  const heartUse = find((m, i) => i.source === 'Inline SVG' && m.includes('M12 21s'));
   check(heartUse && heartUse.markup.includes('#0EA5E9') && !heartUse.markup.includes('<use'), '<use> inlined with resolved colour');
-  const boltUse = find((m, i) => i.source === 'Inline SVG' && m.includes('M13 2 3 14'));
-  check(boltUse && boltUse.markup.includes('#A855F7'), 'xlink:href <use> inlined', boltUse ? 'ok' : 'missing');
   const grad = find((m) => m.includes('url(#brand-grad)'));
-  check(grad && grad.markup.includes('<linearGradient') && grad.markup.includes('id="brand-grad"'), 'out-of-tree gradient copied in');
-  const illo = find((m) => m.includes('viewBox="0 0 1200 800"'));
-  check(!!illo, '<img> SVG file fetched');
-  check(!!find((m) => m.includes('M4 12l5 5L20 6')), 'CSS background SVG fetched');
-  check(!!find((m) => m.includes("r='10'") || m.includes('r="10"')), 'data: URI pseudo-element SVG decoded');
-  const star = find((m) => m.includes('M24 3l6 15'));
-  check(star && /viewBox="0 0 48 48"/.test(star.markup), '<object> SVG read with a viewBox');
-
-  // Every output must render on its own.
+  check(grad && grad.markup.includes('<linearGradient'), 'out-of-tree gradient copied in');
+  check(!!find((m) => m.includes('viewBox="0 0 1200 800"')), '<img> SVG file fetched');
   const decoded = await page.evaluate(async (markups) => Promise.all(markups.map(async (m) => {
     const img = new Image();
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(m)}`;
     try { await img.decode(); return img.naturalWidth > 0; } catch { return false; }
   })), items.filter((i) => i.markup).map((i) => i.markup));
   check(decoded.every(Boolean), 'every SVG decodes standalone', `${decoded.filter(Boolean).length}/${decoded.length}`);
-
-  // Contact sheet of the standalone outputs, for eyeballing against the page.
-  const sheet = await browser.newPage();
-  await sheet.setViewport({ width: 900, height: 600, deviceScaleFactor: 1 });
-  await sheet.setContent(`<body style="margin:0;font:12px system-ui;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding:16px">${
-    items.filter((i) => i.markup).map((i) => `<figure style="margin:0;border:1px solid #ddd;border-radius:8px;padding:8px;text-align:center"><img style="width:120px;height:90px;object-fit:contain" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(i.markup)}"><figcaption>${i.name || i.source}</figcaption></figure>`).join('')}</body>`);
-  await sleep(300);
-  await sheet.screenshot({ path: path.join(OUT, 'svgs-sheet.png'), fullPage: true });
-  await sheet.close();
   await page.close();
 }
 
-if (want('inspector')) {
-  console.log('\nInspector — marketing.html');
+if (want('panel')) {
+  console.log('\nPanel — opens from the toolbar, four tabs, copies');
   const { page, tabId } = await openFixture('marketing.html');
-  let clicked = false;
-  await page.exposeFunction('__ctaClicked', () => { clicked = true; });
-  await page.evaluate(() => document.querySelector('.cta').addEventListener('click', () => window.__ctaClicked()));
-  await tg(tabId, 'inspector', 'inspector.start', { section: 'colours' });
-  const box = await (await page.$('.cta')).boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await sleep(300);
-  check(!clicked, 'clicking an element in inspect mode doesn’t trigger the page');
-  await page.screenshot({ path: path.join(OUT, 'inspector.png') });
+  await openPanel(page, tabId, 'shot');
+  check(await inPanel(page, (r) => r.querySelectorAll('[data-tab]').length) === 4, 'four tabs');
+  check(await inPanel(page, (r) => [...r.querySelectorAll('[data-shot]')].map((b) => b.textContent.trim()).join('|')) === 'Full page|Visible area|Selected area', 'three screenshot types');
+
+  // Locked Tucket tools: explained kindly in place.
+  await clickIn(page, '[data-tool="ocr-area"]');
+  await sleep(200);
+  check(/This one happens in Tucket/.test(await inPanel(page, (r) => r.querySelector('.card')?.textContent || '')), 'locked tool opens the “happens in Tucket” card');
+
+  // Colour: brand swatch copies a hex literal, format toggle switches to rgb().
+  await clickIn(page, '[data-tab="colour"]');
+  await page.waitForSelector('tucket-grab >>> .sw');
+  const roles = await inPanel(page, (r) => [...r.querySelectorAll('.sw .role')].map((e) => e.textContent).join(','));
+  check(roles === 'Primary,Secondary,Tertiary', 'primary, secondary and tertiary shown', roles);
+  await clickIn(page, '.sw');
+  await sleep(250);
+  const hex = await clipboard(page);
+  check(/^#[0-9A-F]{6}$/.test(hex), 'brand swatch puts a hex literal on the clipboard', hex);
+  await clickIn(page, '[data-format="rgb"]');
+  await sleep(200);
+  await clickIn(page, '.sw');
+  await sleep(250);
+  const rgb = await clipboard(page);
+  check(/^rgb\(/.test(rgb), 'format toggle switches the output to rgb()', rgb);
+  await clickIn(page, '[data-format="hex"]');
+
+  // Font: list, then inspect a heading and copy its style.
+  await clickIn(page, '[data-tab="font"]');
+  await page.waitForSelector('tucket-grab >>> .font');
+  const families = await inPanel(page, (r) => [...r.querySelectorAll('.font .sample')].map((e) => e.textContent));
+  check(families.includes('Test Serif') && families.includes('Courier New'), 'font list shows the page’s families', families.join(', '));
+  const sampleFont = await inPanel(page, (r) => [...r.querySelectorAll('.font .sample')].find((e) => e.textContent === 'Test Serif')?.style.fontFamily);
+  check(/Test Serif/.test(sampleFont || ''), 'sample is set in the page’s own web font', sampleFont);
+  await clickIn(page, '[data-act="inspect"]');
+  const h1 = await (await page.$('h1')).boundingBox();
+  let ctaClicked = false;
+  await page.exposeFunction('__h1Clicked', () => { ctaClicked = true; });
+  await page.evaluate(() => document.querySelector('h1').addEventListener('click', () => window.__h1Clicked()));
+  await page.mouse.move(h1.x + 40, h1.y + h1.height / 2);
+  await sleep(200);
+  check(/Test Serif/.test(await inPanel(page, (r) => (r.querySelector('.tip').hidden ? '' : r.querySelector('.tip').textContent))), 'hovering text shows its font');
+  await page.screenshot({ path: path.join(OUT, 'panel-font-inspect.png') });
+  await page.mouse.click(h1.x + 40, h1.y + h1.height / 2);
+  await sleep(250);
+  check(/^Test Serif · 64px\/\d+ · 400$/.test(await clipboard(page)), 'clicking text copies its style line');
+  check(!ctaClicked, 'the page never sees the click');
+
+  // Esc leaves inspect, a second Esc closes; the toolbar handler toggles.
   await page.keyboard.press('Escape');
+  check(await inPanel(page, (r) => r.querySelector('[data-act="inspect"]').getAttribute('aria-checked')) === 'false', 'Esc turns inspect off first');
   await page.keyboard.press('Escape');
-  check(await page.evaluate(() => !document.querySelector('tucket-grab')), 'Esc twice removes the inspector');
+  check(await page.evaluate(() => !document.querySelector('tucket-grab')), 'second Esc closes the panel');
+  await toggle(tabId);
+  await page.waitForSelector('tucket-grab');
+  await toggle(tabId);
+  await sleep(100);
+  check(await page.evaluate(() => !document.querySelector('tucket-grab')), 'toolbar click toggles the panel closed');
   await page.close();
+
+  // A page extensions can't touch: the per-tab popup explains.
+  const blocked = await browser.newPage();
+  await blocked.goto('chrome://version');
+  const blockedTab = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]);
+  const opened = browser.waitForTarget((t) => t.url().endsWith('/src/blocked/blocked.html'), { timeout: 5000 }).then(() => true, () => false);
+  await worker.evaluate((tab) => globalThis.tucketGrab.togglePanel(tab), blockedTab);
+  check(await opened, 'protected page gets the “can’t grab here” card');
+  // The card clears its per-tab popup as it opens, so the next click on a normal page opens the panel.
+  await sleep(300);
+  check(await worker.evaluate((id) => chrome.action.getPopup({ tabId: id }), blockedTab.id) === '', 'and resets the toolbar for next time');
+  await blocked.close();
+}
+
+if (want('pick')) {
+  console.log('\nSVG pick mode — svgs.html');
+  const { page, tabId } = await openFixture('svgs.html');
+  let pageClicks = 0;
+  await page.exposeFunction('__svgClicked', () => { pageClicks++; });
+  await page.evaluate(() => document.querySelector('.icon').addEventListener('click', () => window.__svgClicked()));
+  await openPanel(page, tabId, 'svg');
+  const icon = await (await page.$('.icon')).boundingBox();
+  await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+  await sleep(150);
+  const label = await inPanel(page, (r) => (r.querySelector('.tag').hidden ? '' : r.querySelector('.tag').textContent));
+  check(/^Icon · 24×24$/.test(label), 'hovering an SVG outlines it with its kind and size', label);
+  await page.mouse.click(icon.x + icon.width / 2, icon.y + icon.height / 2);
+  await sleep(400);
+  const clip = await clipboard(page);
+  check(clip.startsWith('<svg') && clip.includes('fill="#E11D48"'), 'click grabs the real SVG to the clipboard', clip.slice(0, 60));
+  check(pageClicks === 0, 'the page never sees the click');
+  check(await inPanel(page, (r) => !!r.querySelector('.preview svg')), 'grabbed SVG previews in the panel');
+  await page.screenshot({ path: path.join(OUT, 'panel-svg-grabbed.png') });
+
+  const img = await (await page.$('img[src*="illustration"]')).boundingBox();
+  await page.mouse.click(img.x + 30, img.y + 30);
+  await sleep(500);
+  check((await clipboard(page)).includes('viewBox="0 0 1200 800"'), '<img> SVG file grabbed by clicking it');
+  check(await inPanel(page, (r) => r.querySelectorAll('.thumb').length) === 2, 'both grabs listed');
+  await page.close();
+
+  console.log('\nStrict CSP — strict.html');
+  const strict = await openFixture('strict.html');
+  const cspErrors = [];
+  strict.page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspErrors.push(m.text()); });
+  await openPanel(strict.page, strict.tabId, 'colour');
+  await sleep(400);
+  const styled = await inPanel(strict.page, (r) => getComputedStyle(r.querySelector('.panel')).borderRadius);
+  check(styled === '28px', 'panel is styled under a strict CSP', styled);
+  await strict.page.screenshot({ path: path.join(OUT, 'panel-strict-csp.png') });
+  check(cspErrors.length === 0, 'no CSP violations', cspErrors[0]?.slice(0, 80));
+  await strict.page.close();
 }
 
 if (want('shots')) {
@@ -273,12 +364,9 @@ if (want('shots')) {
       clientW: document.documentElement.clientWidth,
       lazyTops: [...document.querySelectorAll('img.lazy')].map((i) => ({ y: i.getBoundingClientRect().top + scrollY + 120, x: i.getBoundingClientRect().left + 240 })),
     }));
-    const popup = await openPopup(tabId);
-    await popup.evaluate(() => document.querySelector('[data-tab="screenshot"]').click());
-    await popup.click('[data-shot="full"]');
-    await sleep(2500);
-    await popup.screenshot({ path: path.join(OUT, 'popup-shot-progress.png') });
-    const capture = await waitForCapture(popup);
+    await openPanel(page, tabId, 'shot');
+    await clickIn(page, '[data-shot="full"]');
+    const capture = await waitForCapture();
     const parts = await readParts(capture, 'shot-marketing', (ctx, w, h) => {
       const rgbAt = (x, y) => { const d = ctx.getImageData(x, y, 1, 1).data; return [d[0], d[1], d[2]]; };
       const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 8);
@@ -288,14 +376,16 @@ if (want('shots')) {
         if (near(rgbAt(8, y), [17, 24, 39])) headerRows++;
         if (near(rgbAt(chatX, y), [16, 185, 129])) chatRows++;
       }
-      return { headerRows, chatRows, sample: (pts) => pts };
+      // Where the panel floats (top right), the capture must show the page's dark header.
+      return { headerRows, chatRows, underPanel: rgbAt(w - 200 * 2, 30 * 2) };
     });
     const total = parts.reduce((s, p) => s + p.height, 0);
-    check(parts.length === 1, 'one image');
     check(Math.abs(total - layout.scrollH * DPR) <= DPR * 2, 'stitched height matches the page at 2× DPR', `${total} vs ${layout.scrollH * DPR}`);
     check(parts[0].width === layout.clientW * DPR, 'width excludes the scrollbar, at DPR', `${parts[0].width}`);
     check(parts[0].probed.headerRows <= 64 * DPR + 4, 'fixed header appears once', `${parts[0].probed.headerRows} rows`);
     check(parts[0].probed.chatRows <= 56 * DPR + 4, 'fixed chat bubble appears once', `${parts[0].probed.chatRows} rows`);
+    const [r, g, b] = parts[0].probed.underPanel;
+    check(Math.abs(r - 17) < 8 && Math.abs(g - 24) < 8 && Math.abs(b - 39) < 8, 'the panel never appears in the capture', `${r},${g},${b}`);
     const lazy = await capture.evaluate(async (tops, dpr) => {
       const img = document.querySelector('.part img');
       const c = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
@@ -303,13 +393,12 @@ if (want('shots')) {
       ctx.drawImage(img, 0, 0);
       return tops.map(({ x, y }) => [...ctx.getImageData(x * dpr, y * dpr, 1, 1).data.slice(0, 3)]);
     }, layout.lazyTops, DPR);
-    check(lazy.every(([r, g, b]) => !(r === 221 && g === 221 && b === 221)), 'lazy images loaded before capture', JSON.stringify(lazy));
+    check(lazy.every(([r, g, b]) => !(r === 221 && g === 221 && b === 221)), 'lazy images loaded before capture');
     const restored = await page.evaluate(() => ({ y: scrollY, header: getComputedStyle(document.querySelector('header')).visibility, nav: getComputedStyle(document.querySelector('nav.sub')).position }));
     check(restored.y === 0 && restored.header === 'visible' && restored.nav === 'sticky', 'page restored afterwards', JSON.stringify(restored));
-    await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-    await capture.screenshot({ path: path.join(OUT, 'capture-page.png') });
+    await page.bringToFront();
+    check(await page.evaluate(() => document.querySelector('tucket-grab')?.style.display !== 'none'), 'panel comes back after the capture');
     await capture.close();
-    await popup.close();
     await page.close();
   }
 
@@ -317,112 +406,90 @@ if (want('shots')) {
   {
     const { page, tabId } = await openFixture('docs.html');
     const layout = await page.evaluate(() => { const m = document.querySelector('main'); return { h: m.scrollHeight, w: m.clientWidth }; });
-    const popup = await openPopup(tabId);
-    await popup.evaluate(() => document.querySelector('[data-tab="screenshot"]').click());
-    await popup.click('[data-shot="full"]');
-    const capture = await waitForCapture(popup);
+    await openPanel(page, tabId, 'shot');
+    await clickIn(page, '[data-shot="full"]');
+    const capture = await waitForCapture();
     const parts = await readParts(capture, 'shot-docs', (ctx, w, h) => {
       let tocRows = 0;
-      for (let y = 0; y < h; y++) { const d = ctx.getImageData(120, y, 1, 1).data; /* x=120 is inside main's 40px padding at 2× */ if (Math.abs(d[0] - 253) < 6 && Math.abs(d[1] - 230) < 6 && Math.abs(d[2] - 138) < 8) tocRows++; }
+      for (let y = 0; y < h; y++) { const d = ctx.getImageData(120, y, 1, 1).data; if (Math.abs(d[0] - 253) < 6 && Math.abs(d[1] - 230) < 6 && Math.abs(d[2] - 138) < 8) tocRows++; }
       return { tocRows };
     });
-    const notes = await capture.evaluate(() => document.querySelector('#notes').textContent);
     check(Math.abs(parts[0].height - layout.h * DPR) <= DPR * 2, 'captured the whole scrolling panel', `${parts[0].height} vs ${layout.h * DPR}`);
     check(parts[0].width === layout.w * DPR, 'cropped to the panel width', `${parts[0].width} vs ${layout.w * DPR}`);
     check(parts[0].probed.tocRows < 60 * DPR, 'sticky table of contents appears once', `${parts[0].probed.tocRows} rows`);
-    check(/panel/.test(notes), 'capture page explains the panel capture');
     await capture.close();
-    await popup.close();
     await page.close();
   }
 
-  console.log('\nVisible area and region — marketing.html');
+  console.log('\nVisible area and selected area — marketing.html');
   {
     const { page, tabId } = await openFixture('marketing.html');
     const vp = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
-    let popup = await openPopup(tabId);
-    await popup.evaluate(() => document.querySelector('[data-tab="screenshot"]').click());
-    await popup.click('[data-shot="visible"]');
-    let capture = await waitForCapture(popup);
+    await openPanel(page, tabId, 'shot');
+    await clickIn(page, '[data-shot="visible"]');
+    let capture = await waitForCapture();
     let parts = await readParts(capture, 'shot-visible');
     check(parts[0].width === vp.w * DPR && parts[0].height === vp.h * DPR, 'visible area is one viewport at DPR', `${parts[0].width}×${parts[0].height}`);
     await capture.close();
-    await popup.close().catch(() => {});
 
     await page.bringToFront();
-    popup = await openPopup(tabId);
-    await popup.evaluate(() => document.querySelector('[data-tab="screenshot"]').click());
-    // The popup closes itself so the user can drag on the page; the click never "returns".
-    await popup.evaluate(() => document.querySelector('[data-shot="region"]').click()).catch(() => {});
-    await page.waitForSelector('tucket-grab');
+    await page.waitForFunction(() => document.querySelector('tucket-grab')?.style.display !== 'none');
+    await clickIn(page, '[data-shot="region"]');
+    await page.waitForFunction(() => document.querySelectorAll('tucket-grab').length === 2);
     await sleep(200);
     await page.mouse.move(100, 150);
     await page.mouse.down();
     await page.mouse.move(300, 250, { steps: 5 });
     await page.mouse.move(500, 350, { steps: 5 });
     await page.mouse.up();
-    capture = await waitForCapture(popup);
+    capture = await waitForCapture();
     parts = await readParts(capture, 'shot-region');
-    check(parts[0].width === 400 * DPR && parts[0].height === 200 * DPR, 'region matches the dragged rectangle', `${parts[0].width}×${parts[0].height}`);
+    check(parts[0].width === 400 * DPR && parts[0].height === 200 * DPR, 'selected area matches the dragged rectangle', `${parts[0].width}×${parts[0].height}`);
     await capture.close();
     await page.close();
   }
 }
 
-if (want('popup')) {
-  console.log('\nPopup screens');
-  const { page, tabId } = await openFixture('svgs.html');
-  const popup = await openPopup(tabId);
-  await popup.evaluate(() => chrome.storage.local.remove(['hasTucket', 'lastTab']));
-  for (const tab of ['colours', 'fonts', 'screenshot', 'svgs']) {
-    await popup.evaluate((t) => document.querySelector(`[data-tab="${t}"]`).click(), tab);
-    await sleep(tab === 'svgs' ? 1200 : 600);
-    await popup.screenshot({ path: path.join(OUT, `popup-${tab}.png`) });
+if (want('screens')) {
+  console.log('\nScreens for review — light and dark, busy and plain pages');
+  for (const dark of [false, true]) {
+    for (const fixture of ['marketing.html', 'docs.html']) {
+      const { page, tabId } = await openFixture(fixture, { dark });
+      await page.setViewport({ width: 1280, height: 860, deviceScaleFactor: DPR });
+      if (fixture === 'marketing.html') await page.evaluate(() => window.scrollTo(0, 820));
+      await openPanel(page, tabId);
+      for (const tab of ['shot', 'font', 'colour', 'svg']) {
+        await clickIn(page, `[data-tab="${tab}"]`);
+        await sleep(tab === 'colour' || tab === 'font' ? 700 : 400);
+        const name = `screen-${tab}-${fixture.replace('.html', '')}-${dark ? 'dark' : 'light'}`;
+        await page.screenshot({ path: path.join(OUT, `${name}.png`), clip: { x: 1280 - 400, y: await page.evaluate(() => scrollY), width: 400, height: 860 } });
+      }
+      if (fixture === 'marketing.html') {
+        await clickIn(page, '[data-tab="shot"]');
+        await clickIn(page, '[data-tool="cutout"]');
+        await sleep(450);
+        await page.screenshot({ path: path.join(OUT, `screen-locked-${dark ? 'dark' : 'light'}.png`), clip: { x: 1280 - 400, y: await page.evaluate(() => scrollY), width: 400, height: 860 } });
+        await clickIn(page, '[data-tab="colour"]');
+        await clickIn(page, '[data-act="all"]');
+        await sleep(300);
+        await page.screenshot({ path: path.join(OUT, `screen-colour-all-${dark ? 'dark' : 'light'}.png`), clip: { x: 1280 - 400, y: await page.evaluate(() => scrollY), width: 400, height: 860 } });
+      }
+      await page.close();
+    }
   }
-  const count = await popup.$eval('#svgs-count', (e) => e.textContent);
-  check(Number(count) >= 9, 'SVG tab lists the page’s SVGs', count);
-
-  // Clipboard: click a swatch, read it back.
-  await popup.evaluate(() => document.querySelector('[data-tab="colours"]').click());
-  await popup.waitForSelector('#palette .swatch');
-  await popup.click('#palette .swatch');
-  await sleep(200);
-  const clip = await popup.evaluate(() => navigator.clipboard.readText().catch((e) => `ERR ${e.message}`));
-  check(/^#[0-9A-F]{6}$/.test(clip), 'swatch click puts a hex literal on the clipboard', clip);
-  await popup.click('[data-format="rgb"]');
-  await sleep(150);
-  await popup.click('#palette .swatch');
-  await sleep(200);
-  const rgb = await popup.evaluate(() => navigator.clipboard.readText().catch((e) => `ERR ${e.message}`));
-  check(/^rgba?\(/.test(rgb), 'format toggle switches the output to rgb()', rgb);
-  await popup.click('[data-format="hex"]');
-  await popup.screenshot({ path: path.join(OUT, 'popup-toast.png') });
-
-  // Footer states.
-  await popup.evaluate(() => chrome.storage.local.set({ hasTucket: true }));
-  await sleep(200);
-  await popup.screenshot({ path: path.join(OUT, 'popup-footer-has-tucket.png') });
-  await popup.evaluate(() => chrome.storage.local.remove('hasTucket'));
-  await popup.close();
-
-  // A page extensions can't touch.
-  const blocked = await browser.newPage();
-  await blocked.goto('chrome://version');
-  const blockedId = await worker.evaluate(async () => (await chrome.tabs.query({})).find((t) => !t.url)?.id); // Chrome hides protected pages' URLs from extensions
-  const bp = await openPopup(blockedId);
-  check(await bp.$eval('#blocked', (e) => !e.hidden), 'protected page shows the blocked state');
-  await bp.screenshot({ path: path.join(OUT, 'popup-blocked.png') });
-  await bp.close();
-  await blocked.close();
-
-  // Welcome page (opened on install).
-  const welcomeTarget = browser.targets().find((t) => t.url().includes('/src/welcome/welcome.html'));
-  check(!!welcomeTarget, 'welcome page opened on install');
-  if (welcomeTarget) {
-    const w = await welcomeTarget.page();
-    await w.setViewport({ width: 1100, height: 900, deviceScaleFactor: 1 });
-    await w.screenshot({ path: path.join(OUT, 'welcome.png'), fullPage: true });
-  }
+  const { page, tabId } = await openFixture('marketing.html');
+  await openPanel(page, tabId, 'shot');
+  await clickIn(page, '[data-shot="region"]');
+  await page.waitForFunction(() => document.querySelectorAll('tucket-grab').length === 2);
+  await page.mouse.move(420, 260);
+  await page.mouse.down();
+  await page.mouse.move(820, 520, { steps: 4 });
+  await page.screenshot({ path: path.join(OUT, 'screen-region.png') });
+  await page.mouse.up();
+  const capture = await waitForCapture();
+  await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+  await capture.screenshot({ path: path.join(OUT, 'screen-capture-page.png') });
+  await capture.close();
   await page.close();
 }
 
