@@ -1,15 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Placeholder toolbar icon until the real design lands: an arrow tucking into a tray. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640">
+  <!-- Tucket's own mark, redrawn flat: the app's logo carries inner shadows, a noise filter and a
+       radial gradient, none of which survive at 16px. Same shapes, same violet, crisp when small. -->
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8484FB"/>
-      <stop offset="1" stop-color="#5656E6"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7C7CFA"/>
+      <stop offset="1" stop-color="#6060F0"/>
     </linearGradient>
   </defs>
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#g)"/>
-  <g fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M64 28v44"/>
-    <path d="M45 54l19 19 19-19"/>
-    <path d="M32 74v12a8 8 0 0 0 8 8h48a8 8 0 0 0 8-8V74"/>
-  </g>
+  <rect width="640" height="640" rx="166.957" fill="url(#tile)"/>
+  <path d="M0 320.881C75.754 231.776 191.22 174.858 320.57 174.858C449.273 174.858 564.23 231.209 640 319.546V525.714C640 588.832 588.832 640 525.714 640H114.286C51.168 640 0 588.832 0 525.714V320.881Z" fill="#8C8CFB"/>
+  <ellipse cx="205.715" cy="438.288" rx="90.286" ry="100" fill="#ffffff"/>
+  <ellipse cx="205.157" cy="417.144" rx="61.143" ry="67.429" fill="#3B3A88"/>
+  <ellipse cx="433.139" cy="438.289" rx="90.286" ry="100" fill="#ffffff"/>
+  <ellipse cx="432.573" cy="417.144" rx="61.143" ry="67.429" fill="#3B3A88"/>
 </svg>

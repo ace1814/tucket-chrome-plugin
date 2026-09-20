@@ -364,8 +364,16 @@ if (want('pick')) {
   check(clip.startsWith('<svg') && clip.includes('fill="#E11D48"'), 'click grabs the real SVG to the clipboard', clip.slice(0, 60));
   check(pageClicks === 0, 'the page never sees the click');
   check(await inPanel(page, (r) => !!r.querySelector('.preview svg')), 'grabbed SVG previews in the panel');
+  const ghosts = await inPanel(page, (r) => [...r.querySelectorAll('.ghost')].filter((g) => !g.hidden).length);
+  check(ghosts >= 8, 'every grabbable SVG on the page is outlined at once', `${ghosts} outlined`);
+  check(/\d+ SVGs on this page|more outlined/.test(await inPanel(page, (r) => r.querySelector('.body').textContent)), 'the panel says how many there are');
   await page.screenshot({ path: path.join(OUT, 'panel-svg-grabbed.png') });
 
+  await clickIn(page, '[data-tab="colour"]');
+  await sleep(200);
+  check(await inPanel(page, (r) => r.querySelector('.ghosts').hidden || !r.querySelectorAll('.ghost').length), 'outlines clear when the SVG tab is left');
+  await clickIn(page, '[data-tab="svg"]');
+  await sleep(300);
   const img = await (await page.$('img[src*="illustration"]')).boundingBox();
   await page.mouse.click(img.x + 30, img.y + 30);
   await sleep(500);

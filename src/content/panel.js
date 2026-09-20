@@ -13,7 +13,12 @@
   const icon = (body, size = 18, extra = '') =>
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ${extra}>${body}</svg>`;
   const I = {
-    mark: icon('<path d="M12 4v9"/><path d="m8 9.5 4 4 4-4"/><path d="M5 14v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/>', 14, 'stroke-width="2.6"'),
+    mark: `<svg width="24" height="24" viewBox="0 0 640 640" fill="none" aria-hidden="true">
+      <rect width="640" height="640" rx="166.957" fill="#6C6CF8"/>
+      <path d="M0 320.881C75.754 231.776 191.22 174.858 320.57 174.858C449.273 174.858 564.23 231.209 640 319.546V525.714C640 588.832 588.832 640 525.714 640H114.286C51.168 640 0 588.832 0 525.714V320.881Z" fill="#8C8CFB"/>
+      <ellipse cx="205.715" cy="438.288" rx="90.286" ry="100" fill="#fff"/><ellipse cx="205.157" cy="417.144" rx="61.143" ry="67.429" fill="#3B3A88"/>
+      <ellipse cx="433.139" cy="438.289" rx="90.286" ry="100" fill="#fff"/><ellipse cx="432.573" cy="417.144" rx="61.143" ry="67.429" fill="#3B3A88"/>
+    </svg>`,
     close: icon('<path d="M17 7 7 17M7 7l10 10"/>', 13, 'stroke-width="2.4"'),
     shot: icon('<rect x="3" y="6.5" width="18" height="13.5" rx="3.5"/><circle cx="12" cy="13.2" r="3.4"/><path d="M8.5 6.5 10 4h4l1.5 2.5"/>'),
     font: icon('<path d="M4 19 9 5l5 14"/><path d="M5.8 14h6.4"/><path d="M20 12.5v6.5"/><circle cx="17.2" cy="16.2" r="2.8"/>'),
@@ -77,6 +82,7 @@
     shadow.adoptedStyleSheets = [sheet];
     shadow.innerHTML = `
       <div class="root">
+        <div class="ghosts" hidden></div>
         <div class="outline" hidden></div>
         <div class="tag glass" hidden></div>
         <div class="tip glass" hidden></div>
@@ -98,7 +104,7 @@
 
     const $ = (sel) => shadow.querySelector(sel);
     const panel = $('.panel'), body = $('.body'), foot = $('.foot'), lens = $('.lens');
-    const outline = $('.outline'), tag = $('.tag'), tip = $('.tip'), toastEl = $('.toast');
+    const outline = $('.outline'), tag = $('.tag'), tip = $('.tip'), toastEl = $('.toast'), ghosts = $('.ghosts');
 
     const s = {
       tab: 'shot',
@@ -111,6 +117,7 @@
       recent: [],
       grabs: [],
       current: null,        // the SVG grab shown in the preview
+      svgCount: 0,
       shotError: null,
     };
     let copies = [];
@@ -209,6 +216,13 @@
       for (const b of shadow.querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
       clearTarget();
       render();
+      if (tab === 'svg') {
+        s.svgCount = tg.svgs.findAll();
+        render();
+        drawGhosts();
+      } else {
+        clearGhosts();
+      }
       if (tab === 'colour' && !s.palette) setTimeout(() => { s.palette = tg.palette.scan(); render(); }, 30);
       if (tab === 'font' && !s.fonts) setTimeout(() => { s.fonts = tg.fonts.scan(); render(); lookupFonts(); }, 30);
     }
@@ -388,7 +402,8 @@
       let top;
       if (!cur) {
         top = `<div class="hint"><div class="art">${I.pointer}</div>
-          <b>Point at any icon or illustration</b><span>Click it on the page to grab the real SVG.</span></div>`;
+          <b>${s.svgCount ? `${s.svgCount} ${s.svgCount === 1 ? 'SVG' : 'SVGs'} on this page` : 'Point at any icon or illustration'}</b>
+          <span>${s.svgCount ? 'Every one is outlined. Click one to grab it.' : 'Click it on the page to grab the real SVG.'}</span></div>`;
       } else if (cur.error) {
         top = `<div class="preview checker"><div class="none">This SVG lives on another site,<br>so the browser won’t hand it over.</div></div>
           ${cur.url ? `<div class="actions"><button class="btn" data-copy="${copyId(cur.url)}">${I.copy} Copy its link</button></div>` : ''}`;
@@ -401,7 +416,7 @@
             <button class="btn primary" data-act="svg-send">${connected() ? 'Send to Tucket' : `${I.copy} Copy SVG`}</button>
             <button class="btn" data-act="svg-download">${I.download} Download</button>
           </div>
-          <p class="note">Keep pointing — click another to grab it.</p>`;
+          <p class="note">${s.svgCount > 1 ? `${s.svgCount - 1} more outlined on the page — click any of them.` : 'Keep pointing — click another to grab it.'}</p>`;
       }
       const strip = s.grabs.length > 1 ? `<div class="label">Grabbed here</div>
         <div class="strip">${s.grabs.map((g, i) => `<button class="thumb checker" data-grab="${i}" title="${esc(g.name || g.kind)}"><div class="art-svg" data-svg="${i}"></div></button>`).join('')}</div>` : '';
@@ -444,6 +459,27 @@
         for (const n of node.childNodes) if (n.nodeType === 3 && n.textContent.trim()) return { el: node, type: 'text' };
       }
       return null;
+    }
+
+    // Every SVG on the page outlined at once, so it's obvious what can be grabbed.
+    function drawGhosts() {
+      if (s.tab !== 'svg' || capturing) return clearGhosts();
+      const rects = tg.svgs.rects();
+      while (ghosts.children.length < rects.length) ghosts.append(document.createElement('div'));
+      while (ghosts.children.length > rects.length) ghosts.lastChild.remove();
+      ghosts.hidden = rects.length === 0;
+      rects.forEach((r, i) => {
+        const box = ghosts.children[i];
+        box.className = 'ghost';
+        box.hidden = !r.on;
+        if (!r.on) return;
+        Object.assign(box.style, { left: `${r.x - 3}px`, top: `${r.y - 3}px`, width: `${r.w + 6}px`, height: `${r.h + 6}px` });
+      });
+    }
+
+    function clearGhosts() {
+      ghosts.replaceChildren();
+      ghosts.hidden = true;
     }
 
     function clearTarget() {
@@ -525,6 +561,7 @@
           target = el ? findTarget(el) : null;
         }
         drawTarget();
+        drawGhosts();
       });
     }
 
@@ -589,6 +626,7 @@
     window.addEventListener('click', onPageClick, true);
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll, true);
     blocked.forEach((t) => window.addEventListener(t, swallow, true));
 
     // ---------- capture visibility ----------
@@ -596,11 +634,13 @@
     function hideForCapture() {
       capturing = true;
       clearTarget();
+      clearGhosts();
       host.style.display = 'none';
     }
     function showAfterCapture() {
       capturing = false;
       host.style.display = '';
+      drawGhosts();
     }
 
     function onProgress(p) {
@@ -615,6 +655,7 @@
       window.removeEventListener('click', onPageClick, true);
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll, true);
       blocked.forEach((t) => window.removeEventListener(t, swallow, true));
       try { chrome.storage.onChanged.removeListener(onStorage); } catch { /* extension reloaded */ }
       host.remove();

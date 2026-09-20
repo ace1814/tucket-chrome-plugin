@@ -12,6 +12,7 @@
   const MAX_ITEMS = 300;
   const MAX_BYTES = 2_000_000;
   const MAX_CSS_ELEMENTS = 6000;
+  const MAX_GHOST_SWEEP = 3000;   // the outline sweep runs on every SVG-tab open, so keep it quick
   const FETCH_TIMEOUT_MS = 6000;
 
   // [property, initial value, inherited]. Written as attributes when they differ from what the
@@ -497,6 +498,58 @@
     return null;
   }
 
+  // Every SVG on the page worth outlining, so pick mode can show what's grabbable at a glance.
+  // Cheaper than scan(): nothing is fetched or serialised, only found and measured.
+  const MIN_GHOST = 8;
+  let allTargets = [];
+
+  function findAll() {
+    const seen = new Set();
+    allTargets = [];
+    const push = (el, type, url) => {
+      if (!el || seen.has(el)) return;
+      const r = el.getBoundingClientRect();
+      if (r.width < MIN_GHOST || r.height < MIN_GHOST) return;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') return;
+      seen.add(el);
+      allTargets.push({ el, type, url });
+    };
+
+    for (const svg of document.querySelectorAll('svg')) {
+      if (svg.parentElement?.closest('svg') || isSpriteSheet(svg)) continue;
+      push(svg, 'inline');
+    }
+    for (const img of document.images) {
+      const src = img.currentSrc || img.src;
+      if (isSvgUrl(src)) push(img, 'file', src);
+    }
+    for (const el of document.querySelectorAll('object, embed')) {
+      const src = el.data || el.src || el.getAttribute('data') || el.getAttribute('src');
+      if (isSvgUrl(src) || el.type === 'image/svg+xml') push(el, 'object', src);
+    }
+    const all = document.body ? document.body.getElementsByTagName('*') : [];
+    let checked = 0;
+    for (const el of all) {
+      if (checked++ >= MAX_GHOST_SWEEP) break;
+      if (seen.has(el)) continue;
+      const url = cssSvgUrl(el);
+      if (url) push(el, 'file', url);
+    }
+    return allTargets.length;
+  }
+
+  /** Viewport rectangles for what findAll() found; `on` marks the ones worth drawing. */
+  function rects() {
+    return allTargets.map(({ el }) => {
+      const r = el.getBoundingClientRect();
+      return {
+        x: r.left, y: r.top, w: r.width, h: r.height,
+        on: el.isConnected && r.width > 0 && r.bottom > -40 && r.top < innerHeight + 40 && r.right > -40 && r.left < innerWidth + 40,
+      };
+    });
+  }
+
   /** Serialise a target from targetAt(). { markup, name, kind, w, h, bytes } or { error, url }. */
   async function grab(target) {
     let markup = null;
@@ -569,5 +622,5 @@
     return true;
   }
 
-  tg.svgs = { scan, highlight, targetAt, grab, describeTarget };
+  tg.svgs = { scan, highlight, targetAt, grab, describeTarget, findAll, rects };
 })();

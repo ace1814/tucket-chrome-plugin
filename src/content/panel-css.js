@@ -97,8 +97,8 @@ svg { display: block; flex: none; }
 
 .head { display: flex; align-items: center; gap: 9px; padding: 14px 14px 10px 16px; cursor: grab; user-select: none; }
 .head:active { cursor: grabbing; }
-.mark { width: 24px; height: 24px; border-radius: 7.5px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(145deg, #8f8ffb, #5656e6); box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 1px 3px rgba(86,86,230,.4); }
+.mark { width: 24px; height: 24px; border-radius: 7.5px; overflow: hidden; box-shadow: 0 1px 3px rgba(86, 86, 230, .35); }
+.mark svg { width: 100%; height: 100%; }
 .head strong { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .grow { flex: 1; }
 .close { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--fill); color: var(--ink-2); transition: background .15s, transform .15s; }
@@ -254,6 +254,10 @@ a.pill { display: inline-flex; align-items: center; }
 .foot a:hover { text-decoration: underline; }
 
 /* ---------- on-page helpers ---------- */
+.ghosts { position: fixed; inset: 0; pointer-events: none; }
+.ghost { position: fixed; border-radius: 7px; border: 1.5px dashed color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent); animation: ghost-in .3s ease-out; }
+@keyframes ghost-in { from { opacity: 0; transform: scale(.94); } }
 .outline { position: fixed; pointer-events: none; border-radius: 8px; border: 2px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent); transition: left .08s, top .08s, width .08s, height .08s; }
 .tag { position: fixed; pointer-events: none; padding: 5px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
