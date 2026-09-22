@@ -54,8 +54,9 @@ shadow root, so they must look right on any site and in light and dark.
 ## C. Extension pages
 
 12. **Screenshot result** (a new tab)
-    - Sticky top bar: logo, page title, "Full page · URL", *Send to Tucket*, *Save PNG*
-    - Notes ("too tall for one image, so it's split into 3 parts", "scrolls inside a panel", "stops after 60 screens")
+    - Sticky top bar: logo, page title, "Full page · URL", *Copy text*, *Remove background*, a PNG / JPEG / WebP / PDF picker, *Send to Tucket*, *Save*
+    - Notes ("too tall for one image, so it's split into 3 parts", "the panel is expanded; sidebar and bars come from the first screen", "stops after 60 screens")
+    - The "This one happens in Tucket" card, shown only after tapping a Tucket tool without Tucket
     - The image(s); for multi-part, a per-part header with its own Send/Save
     - Capture expired or missing
     - Toast and footer

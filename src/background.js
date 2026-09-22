@@ -238,9 +238,10 @@ async function runShot({ mode, tabId }) {
     report({ phase: 'saving', mode });
     const id = crypto.randomUUID();
     await pruneCaptures();
+    const [dpr] = await chrome.scripting.executeScript({ target: { tabId }, func: () => devicePixelRatio }).catch(() => [null]);
     await putCapture({
       id, mode, createdAt: Date.now(), pageUrl: tab.url, pageTitle: tab.title,
-      parts: result.parts, notes: result.notes,
+      dpr: dpr?.result || 1, parts: result.parts, notes: result.notes,
     });
     report({ phase: 'done', mode, id });
     await chrome.tabs.create({
@@ -324,15 +325,16 @@ async function shootFullPage(tab) {
         secondsLeft: Math.ceil(((positions.length - i) * CAPTURE_GAP_MS) / 1000),
       });
       const bmp = await toBitmap(await captureTab(tabId, windowId));
+      const first = !stitcher;
       stitcher ||= new Stitcher(bmp, info, totalH);
       await stitcher.add(bmp, actualY);
-      bmp.close();
+      if (!first) bmp.close();   // the first screen is kept: it carries the app's sidebar and bars
     }
 
     report({ phase: 'stitching', mode: 'full' });
     const parts = await stitcher.finish();
     if (parts.length > 1) notes.push(`The page is too tall for one image, so it’s split into ${parts.length} parts.`);
-    if (info.mode === 'element') notes.push('This page scrolls inside a panel, so the capture shows that panel.');
+    if (info.mode === 'element') notes.push('This app scrolls inside a panel. The panel is expanded in full; the sidebar and bars around it come from the first screen.');
     return { parts, notes };
   } finally {
     await call(tabId, 'shot.restore').catch(() => {});
@@ -342,25 +344,36 @@ async function shootFullPage(tab) {
 // Draws each screen onto one or more canvases as it arrives, so memory holds at most a couple of
 // canvases, never every screen at once. Only the part of each screen below what's already drawn
 // is used, which keeps overlap on the final (short) screen from doubling content.
+//
+// When the page itself doesn't scroll and a panel inside it does (Gemini, docs sites, web apps),
+// the whole window is kept: the panel is expanded in place, while the sidebar and the bars above
+// and below it come from the first screen, with their edges carried down the sides.
 class Stitcher {
   constructor(first, info, totalH) {
     const s = (this.scale = first.width / info.viewportW);
-    if (info.mode === 'element') {
-      this.sx = Math.round(info.rect.x * s);
-      this.sy = Math.round(info.rect.y * s);
-      this.w = Math.min(first.width - this.sx, Math.round(info.rect.w * s));
-      this.frameH = Math.min(first.height - this.sy, Math.round(info.rect.h * s));
+    this.element = info.mode === 'element';
+    this.first = first;
+    if (this.element) {
+      this.w = first.width;
+      this.panelX = Math.max(0, Math.round(info.rect.x * s));
+      this.panelW = Math.min(first.width - this.panelX, Math.round(info.rect.w * s));
+      this.top = Math.max(0, Math.round(info.rect.y * s));
+      this.panelH = Math.min(first.height - this.top, Math.round(info.rect.h * s));
+      this.bottom = Math.max(0, first.height - this.top - this.panelH);
     } else {
-      this.sx = 0;
-      this.sy = 0;
       this.w = Math.min(first.width, Math.round(info.clientW * s)); // drop the scrollbar
-      this.frameH = first.height;
+      this.panelX = 0;
+      this.panelW = this.w;
+      this.top = 0;
+      this.panelH = first.height;
+      this.bottom = 0;
     }
-    this.total = Math.round(totalH * s);
+    this.total = this.top + Math.round(totalH * s) + this.bottom;
     this.chunkH = Math.max(1, Math.min(MAX_CHUNK_HEIGHT, Math.floor(MAX_CHUNK_AREA / this.w)));
     this.open = [];   // { index, start, canvas, ctx }
     this.parts = [];
     this.drawnBottom = 0;
+    this.firstDrawn = false;
   }
 
   chunk(index) {
@@ -373,21 +386,64 @@ class Stitcher {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       c = { index, start, canvas, ctx };
       this.open.push(c);
+      if (this.element) this.carrySides(c);
     }
     return c;
   }
 
-  async add(bmp, cssY) {
-    const destY = Math.round(cssY * this.scale);
-    const from = Math.max(destY, this.drawnBottom);
-    const to = Math.min(destY + this.frameH, this.total);
+  // Below the first screen there is no sidebar to copy, so its last row is carried down. On the
+  // flat backgrounds app shells use, that's exactly right; on a patterned one it stays a sensible
+  // continuation rather than a white gap.
+  carrySides(c) {
+    const from = Math.max(c.start, this.first.height);
+    const to = Math.min(c.start + c.canvas.height, this.total - this.bottom);
     if (to <= from) return;
+    const srcY = Math.min(this.first.height - 1, this.top + this.panelH - 1);
+    const rightX = this.panelX + this.panelW;
+    const rightW = this.w - rightX;
+    if (this.panelX > 0) c.ctx.drawImage(this.first, 0, srcY, this.panelX, 1, 0, from - c.start, this.panelX, to - from);
+    if (rightW > 0) c.ctx.drawImage(this.first, rightX, srcY, rightW, 1, rightX, from - c.start, rightW, to - from);
+  }
+
+  async add(bmp, cssY) {
+    // The first screen goes down whole: it holds the sidebar, the top bar and the panel's top.
+    if (!this.firstDrawn) {
+      this.firstDrawn = true;
+      const height = Math.min(bmp.height, this.total);
+      for (let k = Math.floor(0 / this.chunkH); k * this.chunkH < height; k++) {
+        const c = this.chunk(k);
+        c.ctx.drawImage(bmp, 0, 0, this.w, height, 0, -c.start, this.w, height);
+      }
+      this.drawnBottom = Math.min(this.top + this.panelH, this.total - this.bottom);
+      if (!this.element) this.drawnBottom = Math.min(bmp.height, this.total);
+      await this.flush(false);
+      return;
+    }
+
+    const destY = this.top + Math.round(cssY * this.scale);
+    const from = Math.max(destY, this.drawnBottom);
+    const to = Math.min(destY + this.panelH, this.total - this.bottom);
+    if (to <= from) return;
+    const srcY = this.top + (from - destY);
     for (let k = Math.floor(from / this.chunkH); k * this.chunkH < to; k++) {
       const c = this.chunk(k);
-      c.ctx.drawImage(bmp, this.sx, this.sy + (from - destY), this.w, to - from, 0, from - c.start, this.w, to - from);
+      c.ctx.drawImage(bmp, this.panelX, srcY, this.panelW, to - from, this.panelX, from - c.start, this.panelW, to - from);
     }
     this.drawnBottom = to;
     await this.flush(false);
+  }
+
+  // The app's bottom bar (a composer, a toolbar) belongs at the very bottom of the finished image.
+  carryBottom() {
+    if (!this.element || !this.bottom) return;
+    const from = this.total - this.bottom;
+    for (const c of this.open) {
+      const top = Math.max(from, c.start);
+      const end = Math.min(this.total, c.start + c.canvas.height);
+      if (end <= top) continue;
+      c.ctx.drawImage(this.first, 0, this.first.height - this.bottom + (top - from), this.w, end - top, 0, top - c.start, this.w, end - top);
+    }
+    this.drawnBottom = this.total;
   }
 
   async flush(all) {
@@ -409,7 +465,9 @@ class Stitcher {
   }
 
   async finish() {
+    this.carryBottom();
     await this.flush(true);
+    this.first.close();
     return this.parts;
   }
 }

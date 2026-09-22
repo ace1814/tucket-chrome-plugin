@@ -1,4 +1,13 @@
 import { getCapture } from '../lib/idb.js';
+import { buildPdf, pageSize } from '../lib/pdf.js';
+
+const FORMATS = {
+  png: { type: 'image/png', ext: 'png', label: 'PNG' },
+  jpeg: { type: 'image/jpeg', ext: 'jpg', label: 'JPEG', quality: 0.92 },
+  webp: { type: 'image/webp', ext: 'webp', label: 'WebP', quality: 0.92 },
+  pdf: { type: 'application/pdf', ext: 'pdf', label: 'PDF' },
+};
+let format = 'png';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -15,13 +24,56 @@ function button(label, className, onclick) {
   return Object.assign(document.createElement('button'), { type: 'button', className, textContent: label, onclick });
 }
 
+// Re-encode the stored PNG. JPEG has no transparency, so it gets a white page under it.
+async function encode(blob, key) {
+  const { type, quality } = FORMATS[key];
+  if (type === 'image/png') return blob;
+  const bmp = await createImageBitmap(blob);
+  const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+  const ctx = canvas.getContext('2d');
+  if (type === 'image/jpeg') {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.drawImage(bmp, 0, 0);
+  bmp.close();
+  return canvas.convertToBlob({ type, quality });
+}
+
+async function toPdf(parts, dpr) {
+  const pages = [];
+  for (const part of parts) {
+    const jpeg = new Uint8Array(await (await encode(part.blob, 'jpeg')).arrayBuffer());
+    pages.push({ jpeg, width: part.width, height: part.height, ...pageSize(part.width, part.height, dpr) });
+  }
+  return buildPdf(pages);
+}
+
+// PDF puts every part in one file; the image formats save one file each.
+async function saveParts(capture, parts, indexOffset = 0) {
+  const total = capture.parts.length;
+  try {
+    if (format === 'pdf') {
+      download(fileName(capture, indexOffset, parts.length === total ? 1 : total), await toPdf(parts, capture.dpr || 1));
+      return;
+    }
+    for (let i = 0; i < parts.length; i++) {
+      download(fileName(capture, indexOffset + i, total), await encode(parts[i].blob, format));
+      if (i < parts.length - 1) await new Promise((r) => setTimeout(r, 300));
+    }
+  } catch (err) {
+    toast(`Couldn’t save as ${FORMATS[format].label}`);
+    console.error(err);
+  }
+}
+
 function fileName(capture, index, count) {
   let host = 'page';
   try { host = new URL(capture.pageUrl).hostname.replace(/^www\./, ''); } catch { /* keep default */ }
   const d = new Date(capture.createdAt);
   const pad = (n) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} at ${pad(d.getHours())}.${pad(d.getMinutes())}`;
-  return `${host} ${stamp}${count > 1 ? ` (${index + 1} of ${count})` : ''}.png`;
+  return `${host} ${stamp}${count > 1 ? ` (${index + 1} of ${count})` : ''}.${FORMATS[format].ext}`;
 }
 
 function download(name, blob) {
@@ -76,7 +128,7 @@ async function boot() {
     if (parts.length > 1) {
       head.append(
         button('Send to Tucket', 'btn primary', () => sendPng(part.blob)),
-        button('Save PNG', 'btn', () => download(fileName(capture, i, parts.length), part.blob)),
+        button('Save', 'btn', () => saveParts(capture, [part], i)),
       );
     }
     const img = Object.assign(document.createElement('img'), { src: url, alt: `Screenshot${parts.length > 1 ? ` part ${i + 1}` : ''}` });
@@ -87,7 +139,7 @@ async function boot() {
   $('#top-actions').hidden = false;
   if (parts.length > 1) {
     $('#send-first').hidden = true;
-    $('#save-all').textContent = `Save all ${parts.length} PNGs`;
+    $('#save-all').textContent = `Save all ${parts.length}`;
   }
   $('#send-first').onclick = () => sendPng(parts[0].blob);
 
@@ -99,6 +151,14 @@ async function boot() {
     $('#lock-fine').hidden = true;
     $('#lock-close').textContent = 'Got it';
   }
+  $('#format').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-format]');
+    if (!btn) return;
+    format = btn.dataset.format;
+    for (const b of $('#format').querySelectorAll('[data-format]')) b.setAttribute('aria-pressed', String(b.dataset.format === format));
+    $('#save-all').textContent = format === 'pdf' || parts.length === 1 ? 'Save' : `Save all ${parts.length}`;
+  });
+
   $('#lock-close').onclick = () => { $('#lock-card').hidden = true; };
   for (const btn of document.querySelectorAll('[data-tool]')) {
     btn.onclick = async () => {
@@ -110,12 +170,7 @@ async function boot() {
       if (!res?.ok) toast(res?.error || 'Tucket didn’t answer');
     };
   }
-  $('#save-all').onclick = async () => {
-    for (let i = 0; i < parts.length; i++) {
-      download(fileName(capture, i, parts.length), parts[i].blob);
-      if (i < parts.length - 1) await new Promise((r) => setTimeout(r, 300));
-    }
-  };
+  $('#save-all').onclick = () => saveParts(capture, parts);
 }
 
 boot();

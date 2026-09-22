@@ -171,6 +171,7 @@ async function readParts(capturePage, name, probe) {
   return parts;
 }
 
+const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 8);
 const hexOf = (c) => `#${[c.r, c.g, c.b].map((n) => n.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 
 // ---------- suites ----------
@@ -437,6 +438,70 @@ if (want('shots')) {
     check(restored.y === 0 && restored.header === 'visible' && restored.nav === 'sticky', 'page restored afterwards', JSON.stringify(restored));
     await page.bringToFront();
     check(await page.evaluate(() => document.querySelector('tucket-grab')?.style.display !== 'none'), 'panel comes back after the capture');
+
+    // Export formats: save each one for real and check the bytes that land on disk.
+    const downloads = path.join(OUT, 'downloads');
+    await fs.rm(downloads, { recursive: true, force: true });
+    await fs.mkdir(downloads, { recursive: true });
+    const browserSession = await browser.target().createCDPSession();
+    await browserSession.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads, eventsEnabled: true });
+    await capture.bringToFront();
+    const MAGIC = {
+      png: (b) => b[0] === 0x89 && b.subarray(1, 4).toString('latin1') === 'PNG',
+      jpg: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+      webp: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP',
+      pdf: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-',
+    };
+    for (const [fmt, ext] of [['png', 'png'], ['jpeg', 'jpg'], ['webp', 'webp'], ['pdf', 'pdf']]) {
+      await capture.click(`[data-format="${fmt}"]`);
+      await capture.click('#save-all');
+      let file = null;
+      for (let i = 0; i < 60 && !file; i++) {
+        await sleep(250);
+        const names = await fs.readdir(downloads).catch(() => []);
+        file = names.find((n) => n.endsWith(`.${ext}`) && !n.endsWith('.crdownload'));
+      }
+      if (!file) { check(false, `saves ${fmt.toUpperCase()}`, 'no file appeared'); continue; }
+      const bytes = await fs.readFile(path.join(downloads, file));
+      check(MAGIC[ext](bytes), `saves a real ${fmt.toUpperCase()} file`, `${file} · ${(bytes.length / 1e6).toFixed(1)} MB`);
+      if (ext === 'pdf') {
+        const text = bytes.subarray(0, 2000).toString('latin1') + bytes.subarray(-2000).toString('latin1');
+        const media = text.match(/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/);
+        check(/DCTDecode/.test(text) && /\/Type \/Page[^s]/.test(text) && /%%EOF/.test(text), 'the PDF has an image page and a proper trailer');
+        check(media && Math.abs(Number(media[1]) - (parts[0].width / DPR) * 0.75) < 1, 'the PDF page is the page\u2019s real size in points', media?.slice(1).join(' × '));
+      }
+    }
+    await capture.close();
+    await page.close();
+  }
+
+  console.log('\nFull-page screenshot — app.html (Gemini-shaped: sidebar, top bar, scrolling panel, composer)');
+  {
+    const { page, tabId } = await openFixture('app.html');
+    const layout = await page.evaluate(() => {
+      const m = document.querySelector('main');
+      const r = m.getBoundingClientRect();
+      return { panelH: m.scrollHeight, top: r.top, bottom: innerHeight - r.bottom, vw: innerWidth, vh: innerHeight };
+    });
+    await openPanel(page, tabId, 'shot');
+    await clickIn(page, '[data-shot="full"]');
+    const capture = await waitForCapture();
+    const parts = await readParts(capture, 'shot-app', (ctx, w, h) => {
+      const at = (x, y) => [...ctx.getImageData(x, y, 1, 1).data.slice(0, 3)];
+      const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 8);
+      let sidebarRows = 0;
+      for (let y = 0; y < h; y++) if (near(at(60, y), [30, 31, 32])) sidebarRows++;
+      return { sidebarRows, topbar: at(600, 20), bottomBand: at(600, h - 10), midSidebar: at(60, Math.round(h * 0.6)) };
+    });
+    const expected = Math.round((layout.top + layout.panelH + layout.bottom) * DPR);
+    check(parts[0].width === layout.vw * DPR, 'keeps the whole window width, sidebar included', `${parts[0].width} vs ${layout.vw * DPR}`);
+    check(Math.abs(parts[0].height - expected) <= DPR * 2, 'expands the scrolling panel to its full height', `${parts[0].height} vs ${expected}`);
+    check(near(parts[0].probed.topbar, [27, 28, 29]), 'the top bar is there, once', parts[0].probed.topbar.join(','));
+    check(parts[0].probed.sidebarRows > parts[0].height * 0.9, 'the sidebar runs the whole height', `${parts[0].probed.sidebarRows}/${parts[0].height}`);
+    check(near(parts[0].probed.midSidebar, [30, 31, 32]), 'sidebar colour carries past the first screen', parts[0].probed.midSidebar.join(','));
+    check(near(parts[0].probed.bottomBand, [19, 19, 20]) || near(parts[0].probed.bottomBand, [30, 31, 32]), 'the composer bar sits at the bottom', parts[0].probed.bottomBand.join(','));
+    const notes = await capture.evaluate(() => document.querySelector('#notes').textContent);
+    check(/sidebar and bars/.test(notes), 'the capture page explains where the sidebar came from');
     await capture.close();
     await page.close();
   }
@@ -444,17 +509,17 @@ if (want('shots')) {
   console.log('\nFull-page screenshot — docs.html (inner scroll panel)');
   {
     const { page, tabId } = await openFixture('docs.html');
-    const layout = await page.evaluate(() => { const m = document.querySelector('main'); return { h: m.scrollHeight, w: m.clientWidth }; });
+    const layout = await page.evaluate(() => ({ h: document.querySelector('main').scrollHeight, vw: innerWidth }));
     await openPanel(page, tabId, 'shot');
     await clickIn(page, '[data-shot="full"]');
     const capture = await waitForCapture();
     const parts = await readParts(capture, 'shot-docs', (ctx, w, h) => {
       let tocRows = 0;
-      for (let y = 0; y < h; y++) { const d = ctx.getImageData(120, y, 1, 1).data; if (Math.abs(d[0] - 253) < 6 && Math.abs(d[1] - 230) < 6 && Math.abs(d[2] - 138) < 8) tocRows++; }
+      for (let y = 0; y < h; y++) { const d = ctx.getImageData(360, y, 1, 1).data; if (Math.abs(d[0] - 253) < 6 && Math.abs(d[1] - 230) < 6 && Math.abs(d[2] - 138) < 8) tocRows++; }
       return { tocRows };
     });
     check(Math.abs(parts[0].height - layout.h * DPR) <= DPR * 2, 'captured the whole scrolling panel', `${parts[0].height} vs ${layout.h * DPR}`);
-    check(parts[0].width === layout.w * DPR, 'cropped to the panel width', `${parts[0].width} vs ${layout.w * DPR}`);
+    check(parts[0].width === layout.vw * DPR, 'kept the sidebar beside it', `${parts[0].width} vs ${layout.vw * DPR}`);
     check(parts[0].probed.tocRows < 60 * DPR, 'sticky table of contents appears once', `${parts[0].probed.tocRows} rows`);
     await capture.close();
     await page.close();
