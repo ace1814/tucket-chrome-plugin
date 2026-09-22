@@ -493,7 +493,7 @@ if (want('shots')) {
       for (let y = 0; y < h; y++) if (near(at(60, y), [30, 31, 32])) sidebarRows++;
       return { sidebarRows, topbar: at(600, 20), bottomBand: at(600, h - 10), midSidebar: at(60, Math.round(h * 0.6)) };
     });
-    const expected = Math.round((layout.top + layout.panelH + layout.bottom) * DPR);
+    const expected = Math.round((layout.top + layout.panelH + layout.bottom) * DPR);   // the panel plus its bars
     check(parts[0].width === layout.vw * DPR, 'keeps the whole window width, sidebar included', `${parts[0].width} vs ${layout.vw * DPR}`);
     check(Math.abs(parts[0].height - expected) <= DPR * 2, 'expands the scrolling panel to its full height', `${parts[0].height} vs ${expected}`);
     check(near(parts[0].probed.topbar, [27, 28, 29]), 'the top bar is there, once', parts[0].probed.topbar.join(','));
@@ -502,6 +502,43 @@ if (want('shots')) {
     check(near(parts[0].probed.bottomBand, [19, 19, 20]) || near(parts[0].probed.bottomBand, [30, 31, 32]), 'the composer bar sits at the bottom', parts[0].probed.bottomBand.join(','));
     const notes = await capture.evaluate(() => document.querySelector('#notes').textContent);
     check(/sidebar and bars/.test(notes), 'the capture page explains where the sidebar came from');
+    await capture.close();
+    await page.close();
+  }
+
+  console.log('\nFull-page screenshot — app-fixed.html (sidebar inside a full-window fixed shell)');
+  {
+    const { page, tabId } = await openFixture('app-fixed.html');
+    await openPanel(page, tabId, 'shot');
+    await clickIn(page, '[data-shot="full"]');
+    const capture = await waitForCapture();
+    const parts = await readParts(capture, 'shot-app-fixed', (ctx, w, h) => {
+      const at = (x, y) => [...ctx.getImageData(x, y, 1, 1).data.slice(0, 3)];
+      const isMarker = (p) => Math.abs(p[0] - 255) < 10 && Math.abs(p[1] - 87) < 12 && Math.abs(p[2] - 34) < 12;
+      // The rail's orange marker must appear exactly once, in one unbroken band.
+      let bands = 0, rows = 0, inBand = false;
+      for (let y = 0; y < h; y++) {
+        const on = isMarker(at(120, y));
+        if (on) rows++;
+        if (on && !inBand) bands++;
+        inBand = on;
+      }
+      let composerBands = 0, wasOn = false;
+      for (let y = 0; y < h; y++) {
+        const p = at(1200, y);
+        const on = Math.abs(p[0] - 0) < 6 && Math.abs(p[1] - 184) < 6 && Math.abs(p[2] - 148) < 6;
+        if (on && !wasOn) composerBands++;
+        wasOn = on;
+      }
+      let blank = 0;
+      for (let y = 0; y < h; y++) { const p = at(1200, y); if (p[0] > 250 && p[1] > 250 && p[2] > 250) blank++; }
+      return { bands, rows, composerBands, blank, railMid: at(120, Math.round(h * 0.7)) };
+    });
+    const probe = parts[0].probed;
+    check(probe.bands === 1, 'the sidebar appears once, not on every screen', `${probe.bands} bands, ${probe.rows} rows`);
+    check(probe.composerBands <= 1, 'the composer appears once', `${probe.composerBands} bands`);
+    check(Math.abs(probe.railMid[0] - 30) < 6 && Math.abs(probe.railMid[1] - 31) < 6, 'the rail keeps its own background below the first screen', probe.railMid.join(','));
+    check(probe.blank === 0, 'no blank strip anywhere in the image', `${probe.blank} rows`);
     await capture.close();
     await page.close();
   }

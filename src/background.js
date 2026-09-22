@@ -15,6 +15,9 @@ const LAZY_STEP_MS = 90;         // Dwell per screen on the pre-pass that wakes 
 const MAX_FRAMES = 60;           // Infinite feeds never end; stop somewhere sensible.
 const MAX_CHUNK_HEIGHT = 20000;  // Canvas limits: past this, split into several images.
 const MAX_CHUNK_AREA = 200_000_000;
+const DIFF_THRESHOLD = 8;        // total channel change that counts as "this pixel is not the same"
+const MOVED_SHARE = 0.02;        // share of a row or column that must move for it to be content
+const FLAT_RANGE = 12;           // a line this uniform is empty space, not a bar
 
 let job = null;
 let lastCaptureAt = 0;
@@ -206,6 +209,113 @@ async function toBitmap(dataUrl) {
   return createImageBitmap(blob);
 }
 
+// Which part of the window actually scrolls, measured from two screens rather than believed from
+// the DOM. App shells put their sidebar and composer inside a full-window fixed container, so the
+// DOM can report the whole window as scrollable, and an overlaid composer sits inside that area.
+//
+// Rows and columns are judged one at a time: a row belongs to the scrolling content when much of
+// its width changed, which a composer with content sliding past in the margins beside it fails.
+// Flat rows and columns (a plain background scrolling over itself changes no pixels) are then
+// folded back in, out to the DOM's edges, so the band isn't cut short by empty space.
+async function measureBand(a, b, dom, step = 4) {
+  const w = Math.max(1, Math.floor(a.width / step));
+  const h = Math.max(1, Math.floor(a.height / step));
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(a, 0, 0, w, h);
+  const A = ctx.getImageData(0, 0, w, h).data;
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(b, 0, 0, w, h);
+  const B = ctx.getImageData(0, 0, w, h).data;
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const x0d = clamp(Math.floor(dom.x / step), 0, w - 1);
+  const x1d = clamp(Math.ceil((dom.x + dom.w) / step) - 1, 0, w - 1);
+  const y0d = clamp(Math.floor(dom.y / step), 0, h - 1);
+  const y1d = clamp(Math.ceil((dom.y + dom.h) / step) - 1, 0, h - 1);
+  if (x1d <= x0d || y1d <= y0d) return null;
+
+  const moved = (x, y) => {
+    const i = (y * w + x) * 4;
+    return Math.abs(A[i] - B[i]) + Math.abs(A[i + 1] - B[i + 1]) + Math.abs(A[i + 2] - B[i + 2]) >= DIFF_THRESHOLD;
+  };
+  const lum = (x, y) => { const i = (y * w + x) * 4; return A[i] + A[i + 1] + A[i + 2]; };
+  // A line of one flat colour scrolling over itself changes nothing, so it reads as quiet rather
+  // than as a bar. Those get folded back in afterwards.
+  const flat = (from, to, at) => {
+    let min = 765, max = 0;
+    for (let i = from; i <= to; i++) {
+      const v = at(i);
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return max - min < FLAT_RANGE;
+  };
+  const share = (from, to, test) => {
+    let n = 0;
+    for (let i = from; i <= to; i++) if (test(i)) n++;
+    return n / (to - from + 1);
+  };
+  const mean = (from, to, at) => {
+    let sum = 0;
+    for (let i = from; i <= to; i++) sum += at(i);
+    return sum / (to - from + 1);
+  };
+  // Quiet, and the same colour as what it's extending from. A flat bar laid over the content (a
+  // composer, a toolbar) is flat too, but it is not the same colour, so the band stops at it.
+  const extend = (from, to, at, atPrev) =>
+    flat(from, to, at) && Math.abs(mean(from, to, at) - mean(from, to, atPrev)) < FLAT_RANGE;
+
+  // The longest unbroken stretch of moving lines, bridging quiet stretches of the same colour.
+  // A bar laid over the content (a composer, a toolbar) breaks the stretch, and the content
+  // peeking out beyond it is a shorter stretch that loses, so the band stops at the bar.
+  const longestRun = (from, to, isMoving, bridges) => {
+    const runs = [];
+    let run = null;
+    for (let i = from; i <= to; i++) {
+      if (isMoving(i)) {
+        if (run) run.to = i;
+        else run = { from: i, to: i };
+      } else if (run && !bridges(i, i - 1)) {
+        runs.push(run);
+        run = null;
+      }
+    }
+    if (run) runs.push(run);
+    if (!runs.length) return null;
+    return runs.sort((a, b) => b.to - b.from - (a.to - a.from))[0];
+  };
+
+  // Columns first: a sidebar never changes, whatever the DOM claims the scrolling element is.
+  const cols = longestRun(x0d, x1d, (x) => share(y0d, y1d, (y) => moved(x, y)) >= MOVED_SHARE,
+    (x, px) => extend(y0d, y1d, (y) => lum(x, y), (y) => lum(px, y)));
+  if (!cols) return null;
+  let { from: left, to: right } = cols;
+  while (left > x0d && extend(y0d, y1d, (y) => lum(left - 1, y), (y) => lum(left, y))) left--;
+  while (right < x1d && extend(y0d, y1d, (y) => lum(right + 1, y), (y) => lum(right, y))) right++;
+
+  // Rows are judged across the middle of those columns only. A composer or toolbar laid over the
+  // content covers that middle, so it stays still there even while content slides past beside it.
+  const inset = Math.floor((right - left + 1) * 0.1);
+  const midLeft = left + inset;
+  const midRight = right - inset;
+  const rows = longestRun(y0d, y1d, (y) => share(midLeft, midRight, (x) => moved(x, y)) >= MOVED_SHARE,
+    (y, py) => extend(midLeft, midRight, (x) => lum(x, y), (x) => lum(x, py)));
+  if (!rows) return null;
+  let { from: top, to: bottom } = rows;
+  while (top > y0d && extend(midLeft, midRight, (x) => lum(x, top - 1), (x) => lum(x, top))) top--;
+  while (bottom < y1d && extend(midLeft, midRight, (x) => lum(x, bottom + 1), (x) => lum(x, bottom))) bottom++;
+
+  const rect = {
+    x: left * step,
+    y: top * step,
+    w: Math.min((right - left + 1) * step, a.width - left * step),
+    h: Math.min((bottom - top + 1) * step, a.height - top * step),
+  };
+  // Far smaller than the element the DOM pointed at: something else moved, so don't trust it.
+  return rect.w * rect.h < dom.w * dom.h * 0.25 ? null : rect;
+}
+
 async function crop(bmp, sx, sy, w, h) {
   const canvas = new OffscreenCanvas(w, h);
   canvas.getContext('2d').drawImage(bmp, sx, sy, w, h, 0, 0, w, h);
@@ -303,32 +413,55 @@ async function shootFullPage(tab) {
     await sleep(passSteps > 1 ? 450 : 50);
     info = await call(tabId, 'shot.measure');
 
-    // 2. Plan the screens.
-    let totalH = info.totalH;
-    if (totalH > MAX_FRAMES * info.stepH) {
-      totalH = MAX_FRAMES * info.stepH;
-      notes.push(`This page is very long, so the capture stops after ${MAX_FRAMES} screens.`);
-    }
-    const positions = [];
-    for (let y = 0; y < totalH - info.stepH; y += info.stepH) positions.push(y);
-    positions.push(Math.max(0, totalH - info.stepH));
-
-    // 3. Scroll, hide repeated fixed elements, capture, stitch as we go.
-    let stitcher = null;
-    for (let i = 0; i < positions.length; i++) {
-      if (job.cancelled) return null;
-      const actualY = await call(tabId, 'shot.scrollTo', positions[i]);
+    // 2. Take the first screen, and in a panel a probe screen too, which shows which band of the
+    //    window actually scrolls. An app's sidebar, top bar and composer never move; only the band
+    //    between them does, and the content hidden behind a composer is only ever seen if the
+    //    scroll step matches that visible band rather than the element's full height.
+    const screen = async (y, i, count) => {
+      const actualY = await call(tabId, 'shot.scrollTo', y);
       if (i > 0) await call(tabId, 'shot.hideFixed');
       await sleep(SETTLE_MS);
       report({
-        phase: 'capturing', mode: 'full', current: i + 1, total: positions.length,
-        secondsLeft: Math.ceil(((positions.length - i) * CAPTURE_GAP_MS) / 1000),
+        phase: 'capturing', mode: 'full', current: Math.min(i + 1, count), total: count,
+        secondsLeft: Math.ceil(((count - i) * CAPTURE_GAP_MS) / 1000),
       });
-      const bmp = await toBitmap(await captureTab(tabId, windowId));
-      const first = !stitcher;
-      stitcher ||= new Stitcher(bmp, info, totalH);
-      await stitcher.add(bmp, actualY);
-      if (!first) bmp.close();   // the first screen is kept: it carries the app's sidebar and bars
+      return { bmp: await toBitmap(await captureTab(tabId, windowId)), y: actualY };
+    };
+
+    const rough = Math.ceil(info.totalH / info.stepH);
+    const first = await screen(0, 0, rough);
+    const scale = first.bmp.width / info.viewportW;
+    const domBand = info.mode === 'element'
+      ? { x: info.rect.x * scale, y: info.rect.y * scale, w: info.rect.w * scale, h: info.rect.h * scale }
+      : null;
+    let band = null;
+    if (domBand && info.totalH > info.stepH) {
+      if (job.cancelled) return null;
+      const probe = await screen(info.stepH, 1, rough);
+      band = await measureBand(first.bmp, probe.bmp, domBand);
+      probe.bmp.close();
+    }
+    if (domBand && !band) notes.push('The scrolling area couldn’t be measured exactly, so part of the window may repeat.');
+
+    // 3. Plan the screens. Step by what's actually visible (so nothing hides behind a composer),
+    //    but stop where the page itself stops: it can't scroll past its own end.
+    const step = band ? band.h / scale : info.stepH;
+    let maxScroll = Math.max(0, info.totalH - info.stepH);
+    if (maxScroll > MAX_FRAMES * step) {
+      maxScroll = MAX_FRAMES * step;
+      notes.push(`This page is very long, so the capture stops after ${MAX_FRAMES} screens.`);
+    }
+    const positions = [];
+    for (let y = step; y < maxScroll; y += step) positions.push(y);
+    if (maxScroll > 0) positions.push(maxScroll);
+
+    const stitcher = new Stitcher(first.bmp, info, maxScroll, band || domBand);
+    await stitcher.add(first.bmp, first.y);
+    for (let i = 0; i < positions.length; i++) {
+      if (job.cancelled) return null;
+      const { bmp, y } = await screen(positions[i], i + 1, positions.length + 1);
+      await stitcher.add(bmp, y);
+      bmp.close();
     }
 
     report({ phase: 'stitching', mode: 'full' });
@@ -349,16 +482,17 @@ async function shootFullPage(tab) {
 // the whole window is kept: the panel is expanded in place, while the sidebar and the bars above
 // and below it come from the first screen, with their edges carried down the sides.
 class Stitcher {
-  constructor(first, info, totalH) {
+  constructor(first, info, maxScroll, band) {
     const s = (this.scale = first.width / info.viewportW);
     this.element = info.mode === 'element';
     this.first = first;
     if (this.element) {
+      // The measured band wins over the DOM's idea of the scrolling element.
       this.w = first.width;
-      this.panelX = Math.max(0, Math.round(info.rect.x * s));
-      this.panelW = Math.min(first.width - this.panelX, Math.round(info.rect.w * s));
-      this.top = Math.max(0, Math.round(info.rect.y * s));
-      this.panelH = Math.min(first.height - this.top, Math.round(info.rect.h * s));
+      this.panelX = Math.max(0, Math.round(band.x));
+      this.panelW = Math.min(first.width - this.panelX, Math.round(band.w));
+      this.top = Math.max(0, Math.round(band.y));
+      this.panelH = Math.min(first.height - this.top, Math.round(band.h));
       this.bottom = Math.max(0, first.height - this.top - this.panelH);
     } else {
       this.w = Math.min(first.width, Math.round(info.clientW * s)); // drop the scrollbar
@@ -368,7 +502,8 @@ class Stitcher {
       this.panelH = first.height;
       this.bottom = 0;
     }
-    this.total = this.top + Math.round(totalH * s) + this.bottom;
+    // The last screen sits at the page's maximum scroll, so the image is that distance plus one band.
+    this.total = this.top + Math.round(maxScroll * s) + this.panelH + this.bottom;
     this.chunkH = Math.max(1, Math.min(MAX_CHUNK_HEIGHT, Math.floor(MAX_CHUNK_AREA / this.w)));
     this.open = [];   // { index, start, canvas, ctx }
     this.parts = [];
@@ -391,18 +526,44 @@ class Stitcher {
     return c;
   }
 
-  // Below the first screen there is no sidebar to copy, so its last row is carried down. On the
-  // flat backgrounds app shells use, that's exactly right; on a patterned one it stays a sensible
-  // continuation rather than a white gap.
+  // Below the first screen there's no sidebar left to photograph, so the columns beside the panel
+  // are filled with the sidebar's own background colour. Flat, never a repeated avatar or menu.
   carrySides(c) {
     const from = Math.max(c.start, this.first.height);
     const to = Math.min(c.start + c.canvas.height, this.total - this.bottom);
     if (to <= from) return;
-    const srcY = Math.min(this.first.height - 1, this.top + this.panelH - 1);
     const rightX = this.panelX + this.panelW;
     const rightW = this.w - rightX;
-    if (this.panelX > 0) c.ctx.drawImage(this.first, 0, srcY, this.panelX, 1, 0, from - c.start, this.panelX, to - from);
-    if (rightW > 0) c.ctx.drawImage(this.first, rightX, srcY, rightW, 1, rightX, from - c.start, rightW, to - from);
+    if (this.panelX > 0) {
+      c.ctx.fillStyle = this.sideColour(0, this.panelX);
+      c.ctx.fillRect(0, from - c.start, this.panelX, to - from);
+    }
+    if (rightW > 0) {
+      c.ctx.fillStyle = this.sideColour(rightX, rightW);
+      c.ctx.fillRect(rightX, from - c.start, rightW, to - from);
+    }
+  }
+
+  // The commonest colour down a column of the first screen: an app's sidebar background.
+  sideColour(x, width) {
+    if (!this.sides) this.sides = new Map();
+    const key = `${x}:${width}`;
+    if (this.sides.has(key)) return this.sides.get(key);
+    const probe = new OffscreenCanvas(1, 64);
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(this.first, x + Math.floor(width / 2), 0, 1, this.first.height, 0, 0, 1, 64);
+    const data = ctx.getImageData(0, 0, 1, 64).data;
+    const counts = new Map();
+    let best = '#ffffff';
+    let bestN = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const hex = `#${[data[i], data[i + 1], data[i + 2]].map((n) => n.toString(16).padStart(2, '0')).join('')}`;
+      const n = (counts.get(hex) || 0) + 1;
+      counts.set(hex, n);
+      if (n > bestN) { bestN = n; best = hex; }
+    }
+    this.sides.set(key, best);
+    return best;
   }
 
   async add(bmp, cssY) {

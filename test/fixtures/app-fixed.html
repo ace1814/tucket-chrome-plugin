@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App with a fixed shell</title>
+<!-- The trap Gemini sets: the sidebar and composer live inside a full-window fixed shell, so they
+     aren't individually "fixed" and the scrolling element measures as the whole window. Believing
+     the DOM here stitches the sidebar in again on every screen. Only the pixels that move are
+     the content. The rail carries a marker block so a repeat is easy to count. -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 16px/1.6 system-ui, sans-serif; color: #e8eaed; background: #131314; }
+  .shell { position: fixed; inset: 0; }               /* full-viewport: never treated as a floating bar */
+  .rail { position: absolute; left: 0; top: 0; bottom: 0; width: 260px; background: #1e1f20; padding: 20px; }
+  .marker { width: 120px; height: 64px; background: #ff5722; border-radius: 12px; margin-top: 24px; }
+  .who { position: absolute; left: 20px; bottom: 20px; color: #9aa0a6; }
+  .composer { position: absolute; left: 300px; right: 40px; bottom: 16px; height: 64px; background: #00b894; border-radius: 24px;
+              display: flex; align-items: center; padding: 0 20px; color: #9aa0a6; }
+  .scroller { position: absolute; inset: 0 0 0 260px; overflow-y: auto; padding: 0 40px 120px; }
+  .turn { min-height: 640px; border-bottom: 1px solid #2c2d2f; display: flex; align-items: center; font-size: 34px; }
+  .turn:nth-child(even) { background: #17181a; }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <div class="rail">Chats<div class="marker"></div><div class="who">Signed in</div></div>
+    <div class="scroller">
+      <div class="turn">Answer 1</div>
+      <div class="turn">Answer 2</div>
+      <div class="turn">Answer 3</div>
+      <div class="turn">Answer 4</div>
+      <div class="turn">Answer 5 — end</div>
+    </div>
+    <div class="composer">Ask anything…</div>
+  </div>
+</body>
+</html>
