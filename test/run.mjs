@@ -2,7 +2,7 @@
 // extension loaded. Writes screenshots, stitched captures and serialised SVGs to test/out/.
 //
 //   npm test                 all suites
-//   npm test -- svgs shots   just those suites (palette, fonts, fontsource, svgs, panel, pick, shots, screens)
+//   npm test -- svgs shots   just those suites (palette, fonts, fontsource, svgs, panel, pick, shots, markup, shortcuts, screens)
 //   HEADFUL=1 npm test       watch it run
 //
 // Two test-only changes to the build in test/.build, never shipped:
@@ -589,6 +589,178 @@ if (want('shots')) {
     await capture.close();
     await page.close();
   }
+}
+
+// Saves the capture page's current image in a format and returns the bytes of the new file.
+// The folder is emptied first: a second save of the same capture gets the same name, and the
+// browser overwrites rather than renames when downloads are allowed this way.
+async function saveAs(capture, dir, fmt, ext) {
+  for (const n of await fs.readdir(dir).catch(() => [])) await fs.rm(path.join(dir, n), { force: true });
+  await capture.click(`[data-format="${fmt}"]`);
+  await capture.click('#save-all');
+  for (let i = 0; i < 80; i++) {
+    await sleep(200);
+    const names = (await fs.readdir(dir).catch(() => [])).filter((n) => n.endsWith(`.${ext}`) && !n.endsWith('.crdownload'));
+    if (names.length) {
+      await sleep(150);
+      return fs.readFile(path.join(dir, names[0]));
+    }
+  }
+  return null;
+}
+
+async function allowDownloads(dir) {
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+  const session = await browser.target().createCDPSession();
+  await session.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dir, eventsEnabled: true });
+}
+
+if (want('markup')) {
+  console.log('\nMarkup — box, blur and text on a capture, every format, undo');
+  const { page, tabId } = await openFixture('marketing.html');
+  await openPanel(page, tabId, 'shot');
+  await clickIn(page, '[data-shot="visible"]');
+  const capture = await waitForCapture();
+  capture.on('console', (m) => { if (m.type() === 'error') console.log(`    [capture page] ${m.text()}`); });
+  capture.on('pageerror', (e) => console.log(`    [capture page error] ${e.message}`));
+  await capture.setViewport({ width: 1280, height: 1000, deviceScaleFactor: 1 });
+  await capture.bringToFront();
+  await capture.waitForFunction(() => document.querySelector('.stage canvas.marks')?.width > 0);
+  const dir = path.join(OUT, 'markup');
+  await allowDownloads(dir);
+
+  const baseline = await saveAs(capture, dir, 'png', 'png');
+  check(!!baseline, 'saves the unmarked capture first');
+
+  const img = await (await capture.$('.stage img')).boundingBox();
+  const natural = await capture.$eval('.stage img', (i) => ({ w: i.naturalWidth, h: i.naturalHeight }));
+  const k = natural.w / img.width;                // image px per displayed px
+  const css = img.width / (natural.w / DPR);      // displayed px per page CSS px
+  const at = (cx, cy) => ({ x: img.x + cx * css, y: img.y + cy * css }); // page CSS px → screen
+
+  // Box (default colour: red), around the button.
+  await capture.click('[data-mark="box"]');
+  let p1 = at(80, 180), p2 = at(420, 320);
+  await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
+  await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
+  const boxEdge = { x: Math.round((p1.x - img.x) * k), y: Math.round((((p1.y + p2.y) / 2) - img.y) * k) };
+
+  // Blur over the "Screen 1" heading.
+  await capture.click('[data-mark="blur"]');
+  const b1 = at(460, 380), b2 = at(820, 560);
+  await capture.mouse.move(b1.x, b1.y); await capture.mouse.down();
+  await capture.mouse.move(b2.x, b2.y, { steps: 6 }); await capture.mouse.up();
+  const blurRect = { x: Math.round((b1.x - img.x) * k), y: Math.round((b1.y - img.y) * k), w: Math.round((b2.x - b1.x) * k), h: Math.round((b2.y - b1.y) * k) };
+
+  // Text.
+  await capture.click('[data-mark="text"]');
+  const t = at(900, 200);
+  await capture.mouse.click(t.x, t.y);
+  await capture.waitForSelector('.mark-text');
+  await capture.keyboard.type('Look here');
+  await capture.keyboard.press('Enter');
+  const textAt = { x: Math.round((t.x - img.x) * k), y: Math.round((t.y - img.y) * k) };
+  await capture.keyboard.press('Escape');
+  check(await capture.$eval('#undo', (b) => !b.disabled), 'undo is available after marking');
+
+  const marked = await saveAs(capture, dir, 'png', 'png');
+  const probe = await capture.evaluate(async (a64, b64, boxEdge, blurRect, textAt) => {
+    const load = async (b) => { const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b}`)).blob()); const c = new OffscreenCanvas(bmp.width, bmp.height); const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(bmp, 0, 0); return x; };
+    const A = await load(a64), B = await load(b64);
+    const px = (ctx, x, y) => [...ctx.getImageData(x, y, 1, 1).data.slice(0, 3)];
+    const distinct = (ctx, r) => { const d = ctx.getImageData(r.x, r.y, r.w, r.h).data; const s = new Set(); for (let i = 0; i < d.length; i += 4) s.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); return s.size; };
+    // Pixelated means every block is one flat colour. The blocks are the rect split into
+    // ceil(size / 24) cells, so measure each cell with a little inset from its edges.
+    const flatBlocks = (ctx, r) => {
+      const cols = Math.ceil(r.w / 24), rows = Math.ceil(r.h / 24);
+      const bw = r.w / cols, bh = r.h / rows;
+      let checked = 0, flat = 0;
+      for (let j = 0; j < rows; j += 2) {
+        for (let i = 0; i < cols; i += 2) {
+          const x = Math.ceil(r.x + i * bw + 3), y = Math.ceil(r.y + j * bh + 3);
+          const w = Math.floor(bw - 6), h = Math.floor(bh - 6);
+          if (w < 2 || h < 2) continue;
+          const d = ctx.getImageData(x, y, w, h).data;
+          let same = true;
+          for (let n = 4; n < d.length && same; n += 4) same = Math.abs(d[n] - d[0]) <= 1 && Math.abs(d[n + 1] - d[1]) <= 1 && Math.abs(d[n + 2] - d[2]) <= 1;
+          checked++;
+          if (same) flat++;
+        }
+      }
+      return { checked, flat };
+    };
+    const reds = (ctx, x, y, w, h) => { const d = ctx.getImageData(x, y, w, h).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 90 && d[i + 2] < 90) n++; return n; };
+    return {
+      edge: px(B, boxEdge.x, boxEdge.y),
+      edgeBefore: px(A, boxEdge.x, boxEdge.y),
+      distinctBefore: distinct(A, blurRect),
+      distinctAfter: distinct(B, blurRect),
+      blocks: flatBlocks(B, blurRect),
+      blocksBefore: flatBlocks(A, blurRect),
+      textReds: reds(B, textAt.x, textAt.y, 300, 120),
+      textRedsBefore: reds(A, textAt.x, textAt.y, 300, 120),
+    };
+  }, baseline.toString('base64'), marked.toString('base64'), boxEdge, blurRect, textAt);
+  const isRed = ([r, g, b]) => r > 200 && g < 90 && b < 90;
+  check(isRed(probe.edge) && !isRed(probe.edgeBefore), 'the box is burned into the saved PNG', probe.edge.join(','));
+  check(probe.blocks.flat === probe.blocks.checked && probe.blocksBefore.flat < probe.blocksBefore.checked,
+    'blur turns the area into flat blocks in the file', `${probe.blocksBefore.flat}/${probe.blocksBefore.checked} flat before, ${probe.blocks.flat}/${probe.blocks.checked} after`);
+  check(probe.distinctAfter < probe.distinctBefore, 'and loses the detail that was there', `${probe.distinctBefore} → ${probe.distinctAfter} colours`);
+  check(probe.textReds > 40 && probe.textRedsBefore < 5, 'the text is burned in', `${probe.textReds} red pixels`);
+
+  for (const [fmt, ext, mime] of [['jpeg', 'jpg', 'image/jpeg'], ['webp', 'webp', 'image/webp']]) {
+    const bytes = await saveAs(capture, dir, fmt, ext);
+    const edge = await capture.evaluate(async (b64, mime, e) => {
+      const bmp = await createImageBitmap(await (await fetch(`data:${mime};base64,${b64}`)).blob());
+      const c = new OffscreenCanvas(bmp.width, bmp.height); const x = c.getContext('2d'); x.drawImage(bmp, 0, 0);
+      return [...x.getImageData(e.x, e.y, 1, 1).data.slice(0, 3)];
+    }, bytes.toString('base64'), mime, boxEdge);
+    check(edge[0] > 180 && edge[1] < 110 && edge[2] < 110, `marks survive ${fmt.toUpperCase()}`, edge.join(','));
+  }
+  const pdf = await saveAs(capture, dir, 'pdf', 'pdf');
+  check(pdf && pdf.subarray(0, 5).toString('latin1') === '%PDF-', 'marked capture still saves as PDF');
+  await capture.screenshot({ path: path.join(OUT, 'screen-markup.png') });
+
+  for (let i = 0; i < 3; i++) await capture.click('#undo');
+  check(await capture.$eval('#undo', (b) => b.disabled), 'three undos clear every mark');
+  await capture.click('[data-format="png"]');
+  const undone = await saveAs(capture, dir, 'png', 'png');
+  check(undone && Buffer.compare(undone, baseline) === 0, 'after undo the file is byte-for-byte the original');
+  await capture.close();
+  await page.close();
+}
+
+if (want('shortcuts')) {
+  console.log('\nShortcuts — one per capture mode');
+  const commands = JSON.parse(await fs.readFile(path.join(ROOT, 'manifest.json'), 'utf8')).commands;
+  const suggested = Object.values(commands).filter((c) => c.suggested_key).length;
+  check(suggested <= 4, 'within Chrome’s limit of four suggested shortcuts', `${suggested}`);
+  for (const [command, label] of [['shot-full', 'Full page'], ['shot-visible', 'Visible area']]) {
+    const { page, tabId } = await openFixture('marketing.html');
+    await openPanel(page, tabId, 'colour');     // open on purpose: it must not end up in the capture
+    await worker.evaluate(async (c, id) => globalThis.tucketGrab.runCommand(c, await chrome.tabs.get(id)), command, tabId);
+    const capture = await waitForCapture();
+    const meta = await capture.$eval('#page-meta', (e) => e.textContent);
+    const parts = await readParts(capture, `shortcut-${command}`, (ctx, w) => [...ctx.getImageData(w - 200 * 2, 30 * 2, 1, 1).data.slice(0, 3)]);
+    check(meta.startsWith(label), `${command} makes a ${label.toLowerCase()} capture`, meta.split(' · ')[0]);
+    check(near(parts[0].probed, [17, 24, 39]), `${command}: the open panel isn’t in the capture`, parts[0].probed.join(','));
+    await capture.close();
+    await page.bringToFront();
+    check(await page.evaluate(() => document.querySelector('tucket-grab')?.style.display !== 'none'), `${command}: the panel comes back afterwards`);
+    await page.close();
+  }
+  const { page, tabId } = await openFixture('marketing.html');
+  await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-region', await chrome.tabs.get(id)), tabId);
+  await page.waitForSelector('tucket-grab');
+  await sleep(200);
+  await page.mouse.move(200, 200); await page.mouse.down();
+  await page.mouse.move(500, 360, { steps: 5 }); await page.mouse.up();
+  const capture = await waitForCapture();
+  const meta = await capture.$eval('#page-meta', (e) => e.textContent);
+  check(meta.startsWith('Selected region'), 'shot-region makes a selected-area capture', meta.split(' · ')[0]);
+  await capture.close();
+  await page.close();
 }
 
 if (want('screens')) {

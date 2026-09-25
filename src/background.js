@@ -49,8 +49,24 @@ async function togglePanel(tab) {
   }
 }
 
-// The automated tests can't click the toolbar, so they call the same handler.
-globalThis.tucketGrab = { togglePanel };
+// ---------- keyboard shortcuts ----------
+
+// Each capture mode has its own shortcut (rebindable at chrome://extensions/shortcuts). A shortcut
+// grants activeTab exactly as a toolbar click does.
+const COMMAND_MODES = { 'shot-full': 'full', 'shot-visible': 'visible', 'shot-region': 'region' };
+
+chrome.commands.onCommand.addListener((command, tab) => runCommand(command, tab));
+
+function runCommand(command, tab) {
+  const mode = COMMAND_MODES[command];
+  if (!mode || !tab?.id) return false;
+  if (job) return false;
+  runShot({ mode, tabId: tab.id });
+  return true;
+}
+
+// The automated tests can't click the toolbar or press a shortcut, so they call the same handlers.
+globalThis.tucketGrab = { togglePanel, runCommand };
 
 // ---------- messages ----------
 
@@ -335,6 +351,18 @@ function friendlyError(err) {
 
 async function runShot({ mode, tabId }) {
   job = { tabId, mode, cancelled: false, progress: { phase: 'starting', mode } };
+  // Started from a shortcut, the panel may be open on the page: it must never be in the capture.
+  // It comes back by itself when the capture reports done, cancelled or failed.
+  // Wait two frames so the page has repainted without it before anything is captured.
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => new Promise((done) => {
+      if (!globalThis.__tg?.panel?.isOpen?.()) { done(); return; }
+      globalThis.__tg.panel.hideForCapture();
+      requestAnimationFrame(() => requestAnimationFrame(() => done()));
+      setTimeout(done, 120);
+    }),
+  }).catch(() => {});
   report({ phase: 'starting', mode });
   try {
     const tab = await chrome.tabs.get(tabId);

@@ -49,6 +49,19 @@
 
   <main id="parts"></main>
 
+  <!-- Markup: marks sit over the image and are burned in only when it's saved, copied or sent. -->
+  <div class="markup-bar" id="markup-bar" role="toolbar" aria-label="Markup" hidden>
+    <button type="button" data-mark="arrow" title="Arrow (A)" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5"/><path d="M10 5h9v9"/></svg></button>
+    <button type="button" data-mark="box" title="Box (R)" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="3"/></svg></button>
+    <button type="button" data-mark="highlight" title="Highlight (H)" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-5 5v4h4l5-5"/><path d="m14 6 4 4"/><path d="m11 9 6-6 4 4-6 6"/></svg></button>
+    <button type="button" data-mark="text" title="Text (T)" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 6V5h14v1M12 5v14M9 19h6"/></svg></button>
+    <button type="button" data-mark="blur" title="Blur — hides it for good (B)" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="5" height="5" rx="1"/><rect x="10" y="4" width="5" height="5" rx="1" opacity=".55"/><rect x="16" y="4" width="4" height="5" rx="1"/><rect x="4" y="10" width="5" height="5" rx="1" opacity=".55"/><rect x="10" y="10" width="5" height="5" rx="1"/><rect x="16" y="10" width="4" height="5" rx="1" opacity=".55"/><rect x="4" y="16" width="5" height="4" rx="1"/><rect x="10" y="16" width="5" height="4" rx="1" opacity=".55"/><rect x="16" y="16" width="4" height="4" rx="1"/></svg></button>
+    <span class="sep" aria-hidden="true"></span>
+    <span class="colours" id="colours" role="group" aria-label="Colour"></span>
+    <span class="sep" aria-hidden="true"></span>
+    <button type="button" id="undo" title="Undo (⌘Z)" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+  </div>
+
   <footer class="tg-footer" id="footer"></footer>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>

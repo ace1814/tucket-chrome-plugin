@@ -1,5 +1,6 @@
 import { getCapture } from '../lib/idb.js';
 import { buildPdf, pageSize } from '../lib/pdf.js';
+import { Markup, burnIn, COLOURS } from './markup.js';
 
 const FORMATS = {
   png: { type: 'image/png', ext: 'png', label: 'PNG' },
@@ -8,6 +9,14 @@ const FORMATS = {
   pdf: { type: 'application/pdf', ext: 'pdf', label: 'PDF' },
 };
 let format = 'png';
+
+// Markup state, shared by every part's editor.
+let tool = null;
+let colour = COLOURS[0];
+const history = [];   // [{ markup, mark }] across all parts, for undo
+
+// The image as it leaves the page: marks and blur burned in.
+const finalBlob = (part) => burnIn(part.blob, part.markup?.marks || []);
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -43,7 +52,7 @@ async function encode(blob, key) {
 async function toPdf(parts, dpr) {
   const pages = [];
   for (const part of parts) {
-    const jpeg = new Uint8Array(await (await encode(part.blob, 'jpeg')).arrayBuffer());
+    const jpeg = new Uint8Array(await (await encode(await finalBlob(part), 'jpeg')).arrayBuffer());
     pages.push({ jpeg, width: part.width, height: part.height, ...pageSize(part.width, part.height, dpr) });
   }
   return buildPdf(pages);
@@ -58,7 +67,7 @@ async function saveParts(capture, parts, indexOffset = 0) {
       return;
     }
     for (let i = 0; i < parts.length; i++) {
-      download(fileName(capture, indexOffset + i, total), await encode(parts[i].blob, format));
+      download(fileName(capture, indexOffset + i, total), await encode(await finalBlob(parts[i]), format));
       if (i < parts.length - 1) await new Promise((r) => setTimeout(r, 300));
     }
   } catch (err) {
@@ -84,14 +93,63 @@ function download(name, blob) {
 
 let captureMeta = {};
 
-async function sendPng(blob) {
+async function sendPng(part) {
   try {
-    const { via } = await TGSend.send('png', blob, captureMeta);
+    const { via } = await TGSend.send('png', await finalBlob(part), captureMeta);
     toast(TGSend.doneMessage(via, 1, await TGSend.hasTucket()));
   } catch (err) {
     toast('Couldn’t copy the image — click the page and try again');
     console.error(err);
   }
+}
+
+// ---------- markup toolbar ----------
+
+const KEYS = { a: 'arrow', r: 'box', h: 'highlight', t: 'text', b: 'blur' };
+
+function updateUndo() {
+  $('#undo').disabled = history.length === 0;
+}
+
+function setTool(next) {
+  tool = tool === next ? null : next;
+  for (const b of document.querySelectorAll('[data-mark]')) b.setAttribute('aria-pressed', String(b.dataset.mark === tool));
+  document.body.classList.toggle('marking', !!tool);
+  if (tool) document.body.dataset.tool = tool;
+  else delete document.body.dataset.tool;
+}
+
+function undo() {
+  const last = history.pop();
+  if (last) last.markup.remove(last.mark);
+  updateUndo();
+}
+
+function setUpMarkup() {
+  const bar = $('#markup-bar');
+  bar.hidden = false;
+  $('#colours').replaceChildren(...COLOURS.map((c, i) => {
+    const b = Object.assign(document.createElement('button'), { type: 'button', title: c });
+    b.style.background = c;
+    b.dataset.colour = c;
+    b.setAttribute('aria-pressed', String(i === 0));
+    return b;
+  }));
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.mark) setTool(b.dataset.mark);
+    else if (b.dataset.colour) {
+      colour = b.dataset.colour;
+      for (const c of $('#colours').children) c.setAttribute('aria-pressed', String(c === b));
+    } else if (b.id === 'undo') undo();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest?.('input, textarea')) return;
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
+    if (e.key === 'Escape' && tool) { setTool(tool); return; }
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && KEYS[e.key.toLowerCase()]) setTool(KEYS[e.key.toLowerCase()]);
+  });
 }
 
 async function boot() {
@@ -127,13 +185,23 @@ async function boot() {
     head.append(meta);
     if (parts.length > 1) {
       head.append(
-        button('Send to Tucket', 'btn primary', () => sendPng(part.blob)),
+        button('Send to Tucket', 'btn primary', () => sendPng(part)),
         button('Save', 'btn', () => saveParts(capture, [part], i)),
       );
     }
     const img = Object.assign(document.createElement('img'), { src: url, alt: `Screenshot${parts.length > 1 ? ` part ${i + 1}` : ''}` });
-    wrap.append(head, img);
+    const stage = document.createElement('div');
+    stage.className = 'stage';
+    stage.append(img);
+    wrap.append(head, stage);
     container.append(wrap);
+    img.addEventListener('load', () => {
+      part.markup = new Markup({
+        stage, img,
+        tools: () => ({ tool, colour }),
+        onCommit: (markup, mark) => { history.push({ markup, mark }); updateUndo(); },
+      });
+    }, { once: true });
   });
 
   $('#top-actions').hidden = false;
@@ -141,7 +209,8 @@ async function boot() {
     $('#send-first').hidden = true;
     $('#save-all').textContent = `Save all ${parts.length}`;
   }
-  $('#send-first').onclick = () => sendPng(parts[0].blob);
+  $('#send-first').onclick = () => sendPng(parts[0]);
+  setUpMarkup();
 
   // Tucket tools live here, after a capture, rather than as a pitch in the panel.
   $('#lock-cta').href = TGFooter.ctaUrl('capture-tools');

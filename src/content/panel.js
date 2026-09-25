@@ -686,5 +686,6 @@
       return true;
     },
     isOpen: () => !!ui,
+    hideForCapture() { ui?.hideForCapture(); },
   };
 })();

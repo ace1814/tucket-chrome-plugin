@@ -27,12 +27,35 @@ body { background: var(--bg-2); min-height: 100vh; display: flex; flex-direction
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); color: var(--fg-2); }
 .missing { text-align: center; color: var(--fg-2); margin: 80px 20px; }
 
-main { flex: 1; padding: 20px; display: grid; gap: 24px; justify-items: center; }
+main { flex: 1; padding: 20px 20px 104px; display: grid; gap: 24px; justify-items: center; }
 .part { width: 100%; max-width: 1100px; }
 .part-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .part-head span { flex: 1; color: var(--fg-2); font-size: 12px; }
 .part-head .btn { padding: 6px 10px; font-size: 12px; }
 .part img { display: block; width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 16px rgba(0,0,0,.12), 0 0 0 1px rgba(0,0,0,.06); background: #fff; }
 
-.tg-footer { background: var(--bg); justify-content: center; gap: 16px; }
+.tg-footer { background: var(--bg); justify-content: center; gap: 16px; padding-bottom: 84px; } /* clears the markup bar */
 .tg-cta { margin-left: 0; }
+
+/* Markup */
+.stage { position: relative; }
+.stage canvas.marks { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 8px; pointer-events: none; touch-action: none; }
+body.marking .stage canvas.marks { pointer-events: auto; cursor: crosshair; }
+body.marking[data-tool="text"] .stage canvas.marks { cursor: text; }
+.mark-text { position: absolute; transform: translateY(-6px); min-width: 200px; padding: 5px 9px; border-radius: 7px; outline: none;
+  font: 650 16px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; background: rgba(255,255,255,.94);
+  border: 1.5px solid var(--accent); box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+
+.markup-bar { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 4px;
+  padding: 6px; border-radius: 999px; background: color-mix(in srgb, var(--bg) 72%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 0 0 .5px rgba(0,0,0,.12), 0 12px 36px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.6); }
+.markup-bar button { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--fg-2); transition: background .15s, color .15s, transform .15s; }
+.markup-bar button:hover { background: var(--bg-3); color: var(--fg); }
+.markup-bar button:active { transform: scale(.92); }
+.markup-bar button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.markup-bar button:disabled { opacity: .35; cursor: default; }
+.markup-bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.colours { display: flex; gap: 6px; padding: 0 4px; }
+.colours button { width: 22px; height: 22px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); }
+.colours button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
