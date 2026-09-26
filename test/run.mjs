@@ -2,7 +2,7 @@
 // extension loaded. Writes screenshots, stitched captures and serialised SVGs to test/out/.
 //
 //   npm test                 all suites
-//   npm test -- svgs shots   just those suites (palette, fonts, fontsource, svgs, panel, pick, shots, markup, shortcuts, screens)
+//   npm test -- svgs shots   just those suites (palette, fonts, fontsource, svgs, panel, pick, shots, markup, shortcuts, tucket, screens)
 //   HEADFUL=1 npm test       watch it run
 //
 // Two test-only changes to the build in test/.build, never shipped:
@@ -11,6 +11,7 @@
 //  - the panel's shadow root is opened, so Puppeteer can reach inside it.
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
 import { findChrome } from '../tools/chrome.mjs';
@@ -77,8 +78,12 @@ const panelSrc = await fs.readFile(panelFile, 'utf8');
 if (!panelSrc.includes("attachShadow({ mode: 'closed' })")) throw new Error('panel.js no longer attaches a closed shadow root; update the test build patch');
 await fs.writeFile(panelFile, panelSrc.replace("attachShadow({ mode: 'closed' })", "attachShadow({ mode: 'open' })"));
 
+// A throwaway profile, so the stand-in Tucket host can be registered in it (Chrome reads
+// <profile>/NativeMessagingHosts on the Mac) without touching any real browser's setup.
+const PROFILE = await fs.mkdtemp(path.join(os.tmpdir(), 'tucket-grab-test-'));
 const browser = await puppeteer.launch({
   executablePath: await findChrome(),
+  userDataDir: PROFILE,
   headless: !process.env.HEADFUL,
   pipe: true,
   defaultViewport: null,
@@ -453,8 +458,8 @@ if (want('shots')) {
       pdf: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-',
     };
     for (const [fmt, ext] of [['png', 'png'], ['jpeg', 'jpg'], ['webp', 'webp'], ['pdf', 'pdf']]) {
-      await capture.click(`[data-format="${fmt}"]`);
-      await capture.click('#save-all');
+      await pickFormat(capture, fmt);
+      check(await capture.$eval('#save-main', (b) => b.textContent) === `Save as ${fmt === 'jpeg' ? 'JPEG' : fmt === 'webp' ? 'WebP' : fmt.toUpperCase()}`, `the Save button now reads “Save as ${fmt.toUpperCase()}”`);
       let file = null;
       for (let i = 0; i < 60 && !file; i++) {
         await sleep(250);
@@ -471,6 +476,42 @@ if (want('shots')) {
         check(media && Math.abs(Number(media[1]) - (parts[0].width / DPR) * 0.75) < 1, 'the PDF page is the page\u2019s real size in points', media?.slice(1).join(' × '));
       }
     }
+    await capture.close();
+    await page.close();
+  }
+
+  console.log('\nFull-page screenshot — body-scroll.html (window locked, <body> is the scroller)');
+  {
+    const { page, tabId } = await openFixture('body-scroll.html');
+    await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-full', await chrome.tabs.get(id)), tabId);
+    const capture = await waitForCapture();
+    const parts = await readParts(capture, 'shot-body-scroll', (ctx, w, h) => [...ctx.getImageData(w / 2, h - 40, 1, 1).data.slice(0, 3)]);
+    const total = parts.reduce((s, p) => s + p.height, 0);
+    check(Math.abs(total - 3000 * DPR) <= DPR * 2, 'the whole body is captured, not one screen', `${total / DPR}px of 3000`);
+    check(near(parts.at(-1).probed, [0xd3, 0x54, 0x00]), 'it ends on the last band', parts.at(-1).probed.join(','));
+    check(await page.evaluate(() => document.body.scrollTop) === 0, 'the body is scrolled back afterwards');
+    await capture.close();
+    await page.close();
+  }
+
+  console.log('\nStop part way — long.html (36,000px), Esc during the capture');
+  {
+    const { page, tabId } = await openFixture('long.html');
+    await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-full', await chrome.tabs.get(id)), tabId);
+    // Wait for a few screens, then press Esc on the page.
+    await worker.evaluate(() => new Promise((resolve) => {
+      const on = (msg) => { if (msg?.type === 'shot:progress' && msg.progress.phase === 'capturing' && msg.progress.current >= 4) { chrome.runtime.onMessage.removeListener(on); resolve(); } };
+      chrome.runtime.onMessage.addListener(on);
+      setTimeout(resolve, 20000);
+    }));
+    await page.keyboard.press('Escape');
+    const capture = await waitForCapture();
+    const parts = await readParts(capture, 'shot-stopped');
+    const total = parts.reduce((s, p) => s + p.height, 0) / DPR;
+    check(total > 860 && total < 36000 - 1, 'stopping keeps what was captured so far', `${total}px of 36000`);
+    const notes = await capture.$eval('#notes', (e) => (e.hidden ? '' : e.textContent));
+    check(/Stopped early/.test(notes), 'the result page says it was stopped early', notes.slice(0, 60));
+    check(await page.evaluate(() => scrollY) === 0, 'the page is scrolled back afterwards');
     await capture.close();
     await page.close();
   }
@@ -654,8 +695,7 @@ if (want('shots')) {
 // browser overwrites rather than renames when downloads are allowed this way.
 async function saveAs(capture, dir, fmt, ext) {
   for (const n of await fs.readdir(dir).catch(() => [])) await fs.rm(path.join(dir, n), { force: true });
-  await capture.click(`[data-format="${fmt}"]`);
-  await capture.click('#save-all');
+  await pickFormat(capture, fmt);
   for (let i = 0; i < 80; i++) {
     await sleep(200);
     const names = (await fs.readdir(dir).catch(() => [])).filter((n) => n.endsWith(`.${ext}`) && !n.endsWith('.crdownload'));
@@ -665,6 +705,13 @@ async function saveAs(capture, dir, fmt, ext) {
     }
   }
   return null;
+}
+
+// "Save as ▾": picking a format in the menu saves in it straight away.
+async function pickFormat(capture, fmt) {
+  await capture.click('#save-more');
+  await capture.waitForSelector('#save-menu:not([hidden])');
+  await capture.click(`#save-menu [data-format="${fmt}"]`);
 }
 
 async function allowDownloads(dir) {
@@ -782,7 +829,6 @@ if (want('markup')) {
 
   for (let i = 0; i < 3; i++) await capture.click('#undo');
   check(await capture.$eval('#undo', (b) => b.disabled), 'three undos clear every mark');
-  await capture.click('[data-format="png"]');
   const undone = await saveAs(capture, dir, 'png', 'png');
   check(undone && Buffer.compare(undone, baseline) === 0, 'after undo the file is byte-for-byte the original');
   await capture.close();
@@ -821,6 +867,138 @@ if (want('shortcuts')) {
   await page.close();
 }
 
+// Registers tools/fake-host.mjs as Tucket's bridge in the test profile. mode: "ok" or an error code.
+const HOST_DIR = path.join(PROFILE, 'fake-tucket');
+const HOST_MANIFEST = path.join(PROFILE, 'NativeMessagingHosts', 'com.arpitchandak.tucket.json');
+async function installHost(mode = 'ok') {
+  await fs.mkdir(HOST_DIR, { recursive: true });
+  await fs.mkdir(path.dirname(HOST_MANIFEST), { recursive: true });
+  const wrapper = path.join(HOST_DIR, 'tucket-bridge');
+  await fs.writeFile(wrapper, `#!/bin/sh\nFAKE_HOST_DIR="${HOST_DIR}" exec "${process.execPath}" "${path.join(ROOT, 'tools/fake-host.mjs')}" "$@"\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(HOST_DIR, 'mode'), mode);
+  await fs.writeFile(HOST_MANIFEST, JSON.stringify({
+    name: 'com.arpitchandak.tucket', description: 'Fake Tucket bridge for tests', path: wrapper, type: 'stdio',
+    allowed_origins: [`chrome-extension://${EXPECTED_ID}/`],
+  }));
+}
+async function hostLog() {
+  const text = await fs.readFile(path.join(HOST_DIR, 'log.jsonl'), 'utf8').catch(() => '');
+  return text.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+async function visibleCapture(fixture = 'marketing.html') {
+  const { page, tabId } = await openFixture(fixture);
+  await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-visible', await chrome.tabs.get(id)), tabId);
+  const capture = await waitForCapture();
+  capture.on('pageerror', (e) => console.log(`    [capture page error] ${e.message}`));
+  await capture.setViewport({ width: 1280, height: 860, deviceScaleFactor: 1 });
+  await capture.bringToFront();
+  return { page, capture };
+}
+
+if (want('tucket')) {
+  console.log('\nTucket — result page without Tucket');
+  {
+    await fs.rm(HOST_MANIFEST, { force: true });
+    const { page, capture } = await visibleCapture();
+    await capture.waitForSelector('#sync[data-state="off"]');
+    check(await capture.$eval('#sync-label', (e) => e.textContent) === 'Not in Tucket', 'the sync badge shows a cross: not in Tucket');
+    check(/You need Tucket/.test(await capture.$eval('#sync', (e) => e.title)), 'and says you need Tucket for it');
+    const looks = await capture.$eval('[data-tool="ocr"]', (b) => { const cs = getComputedStyle(b); return { label: b.textContent.trim(), shadow: cs.boxShadow, bg: cs.backgroundColor, bar: getComputedStyle(document.querySelector('.top')).backgroundColor }; });
+    check(looks.label === 'Extract text', 'the OCR tool is called “Extract text”', looks.label);
+    check(/inset/.test(looks.shadow), 'tool buttons have a visible outline on the bar', looks.shadow.slice(0, 40));
+    check(await capture.$eval('#save-main', (b) => b.textContent) === 'Save as PNG', 'one “Save as PNG ▾” control instead of Save plus a format row');
+    check(!(await capture.$('#send-first')), 'no “Send to Tucket” button');
+    for (const [tool, title] of [['ocr', /reading text/], ['cutout', /scissors/]]) {
+      await capture.click(`[data-tool="${tool}"]`);
+      await capture.waitForSelector('#upsell[open]');
+      const u = await capture.evaluate(() => ({
+        title: document.querySelector('#upsell-title').textContent,
+        first: document.querySelector('#upsell-perks li').dataset.perk,
+        offer: document.querySelector('#upsell-offer').hidden ? '' : document.querySelector('#upsell-offer').textContent,
+        href: document.querySelector('#upsell-cta').href,
+      }));
+      check(title.test(u.title), `${tool}: a friendly “sorry, that’s Tucket” pop-up`, u.title);
+      check(u.first === tool, `${tool}: the perk they reached for comes first`, u.first);
+      check(/20% off/.test(u.offer) && /offer=grab20/.test(u.href), `${tool}: the Grab discount is offered`, u.offer);
+      await capture.click('#upsell-close');
+      await capture.waitForFunction(() => !document.querySelector('#upsell').open);
+    }
+    await capture.click('#sync');
+    await capture.waitForSelector('#upsell[open]');
+    check(/no Tucket to save to/.test(await capture.$eval('#upsell-title', (e) => e.textContent)), 'tapping the cross explains syncing needs Tucket');
+    await capture.keyboard.press('Escape');
+    await capture.close();
+    await page.close();
+  }
+
+  console.log('\nTucket — connected (stand-in host speaking the 1.3.9 protocol)');
+  {
+    await installHost('ok');
+    await fs.rm(path.join(HOST_DIR, 'log.jsonl'), { force: true });
+    const { page, capture } = await visibleCapture();
+    const pageUrl = page.url();
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 15000 });
+    let log = await hostLog();
+    const ingests = log.filter((e) => e.op === 'ingest');
+    check(ingests.length === 1 && ingests[0].kind === 'image' && ingests[0].data?.width === 1280 * DPR, 'the capture lands in Tucket by itself, as an image', JSON.stringify(ingests[0]?.data));
+    check(ingests[0]?.pageUrl === pageUrl && ingests[0]?.pageTitle === await page.title(), 'with the page’s address and title', `${ingests[0]?.pageTitle}`);
+    check(/127\.0\.0\.1/.test(await capture.$eval('#sync', (e) => e.title)), 'the badge says which site it was filed under', await capture.$eval('#sync', (e) => e.title));
+    check(/Connected to Tucket 1\.3\.9/.test(await capture.$eval('#footer', (e) => e.textContent)), 'the footer agrees: connected');
+    await capture.screenshot({ path: path.join(OUT, 'screen-capture-synced.png') });
+
+    await capture.click('[data-tool="ocr"]');
+    await capture.waitForSelector('#result[open] #result-text:not([hidden])', { timeout: 15000 });
+    const text = await capture.$eval('#result-text', (t) => t.value);
+    check(text.startsWith(`Fake OCR of a ${1280 * DPR}×`), 'Extract text shows Tucket’s text here in Grab', text.split('\n')[0]);
+    await sleep(300); // the sheet's rise animation
+    await capture.screenshot({ path: path.join(OUT, 'screen-capture-ocr.png') });
+    await capture.click('#result-close');
+
+    await capture.click('[data-tool="cutout"]');
+    await capture.waitForSelector('#result[open] #result-image:not([hidden])', { timeout: 15000 });
+    const cut = await capture.$eval('#result-img', (i) => new Promise((r) => (i.complete ? r() : i.onload = r)).then(() => ({ w: i.naturalWidth, h: i.naturalHeight })));
+    log = await hostLog();
+    check(cut.w === 1280 * DPR, 'Remove background shows the cut-out here (a chunked reply, reassembled)', `${cut.w}×${cut.h}`);
+    check(log.some((e) => e.op === 'removeBackground' && e.pageUrl === pageUrl), 'and sends the page along with it');
+    await sleep(300); // the sheet's rise animation
+    await capture.screenshot({ path: path.join(OUT, 'screen-capture-cutout.png') });
+    await capture.click('#result-close');
+
+    // Marks after syncing: the badge offers to save the marked version too.
+    await capture.click('[data-mark="box"]');
+    const img = await (await capture.$('.stage img')).boundingBox();
+    await capture.mouse.move(img.x + 60, img.y + 60); await capture.mouse.down();
+    await capture.mouse.move(img.x + 300, img.y + 200, { steps: 5 }); await capture.mouse.up();
+    await capture.waitForSelector('#sync[data-state="edited"]');
+    check(true, 'marking after it synced turns the badge into “Update Tucket”');
+    await capture.click('#sync');
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 15000 });
+    check((await hostLog()).filter((e) => e.op === 'ingest').length === 2, 'clicking it saves the marked version');
+
+    await capture.reload();
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 15000 });
+    check((await hostLog()).filter((e) => e.op === 'ingest').length === 2, 'reopening the result page doesn’t save it again');
+    await capture.close();
+    await page.close();
+  }
+
+  console.log('\nTucket — installed but not answering');
+  {
+    await installHost('app-not-running');
+    const { page, capture } = await visibleCapture();
+    await capture.waitForSelector('#sync[data-state="failed"]', { timeout: 20000 });
+    check(/Retry/.test(await capture.$eval('#sync-label', (e) => e.textContent)), 'the badge offers a retry instead of a sales pitch');
+    await installHost('ok');
+    await capture.click('#sync');
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 15000 });
+    check(true, 'retry syncs once Tucket answers');
+    await capture.close();
+    await page.close();
+    await fs.rm(HOST_MANIFEST, { force: true });
+  }
+}
+
 if (want('screens')) {
   console.log('\nScreens for review — light and dark, busy and plain pages');
   for (const dark of [false, true]) {
@@ -855,19 +1033,23 @@ if (want('screens')) {
   await page.mouse.up();
   const capture = await waitForCapture();
   await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
-  check(await capture.$eval('#lock-card', (e) => e.hidden), 'result page shows no Tucket pitch until a tool is tapped');
+  await capture.waitForSelector('#sync[data-state="off"]');
+  check(await capture.$eval('#upsell', (d) => !d.open), 'result page shows no Tucket pitch until a tool is tapped');
   await capture.screenshot({ path: path.join(OUT, 'screen-capture-page.png') });
+  await capture.click('#save-more');
+  await capture.screenshot({ path: path.join(OUT, 'screen-capture-save-menu.png') });
+  await capture.keyboard.press('Escape');
   await capture.click('[data-tool="ocr"]');
-  await capture.waitForSelector('#lock-card:not([hidden])');
-  check(/This one happens in Tucket/.test(await capture.$eval('#lock-card', (e) => e.textContent)), 'tapping Copy text without Tucket explains it kindly');
-  await capture.screenshot({ path: path.join(OUT, 'screen-capture-locked.png') });
-  await capture.click('#lock-close');
-  check(await capture.$eval('#lock-card', (e) => e.hidden), '“Not now” closes it');
+  await capture.waitForSelector('#upsell[open]');
+  await sleep(300);
+  await capture.screenshot({ path: path.join(OUT, 'screen-capture-upsell.png') });
+  await capture.click('#upsell-close');
   await capture.close();
   await page.close();
 }
 
 await browser.close();
 server.close();
+await fs.rm(PROFILE, { recursive: true, force: true }).catch(() => {});
 console.log(failures ? `\n${failures} failed\n` : '\nAll passed\n');
 process.exit(failures ? 1 : 0);

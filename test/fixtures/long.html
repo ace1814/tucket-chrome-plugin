@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Very long page</title>
+<!-- 60 bands of 600px: 36,000px, long enough that someone stops the capture part way. -->
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+  .band { height: 600px; display: flex; align-items: center; justify-content: center; font-size: 48px; font-weight: 700; color: #fff; }
+</style>
+</head>
+<body>
+<script>
+  for (let i = 0; i < 60; i++) {
+    const d = document.createElement('div');
+    d.className = 'band';
+    d.style.background = `hsl(${(i * 47) % 360} 60% 42%)`;
+    d.textContent = `Band ${i + 1}`;
+    document.body.appendChild(d);
+  }
+</script>
+</body>
+</html>

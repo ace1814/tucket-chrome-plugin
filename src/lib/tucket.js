@@ -1,16 +1,21 @@
-// The bridge to Tucket for Mac (Tucket 1.3.8+), over Chrome native messaging.
+// The bridge to Tucket for Mac (Tucket 1.3.9+), over Chrome native messaging.
 // Tucket installs a host manifest named com.arpitchandak.tucket in each browser; if it isn't
-// there, connectNative fails at once and Grab falls back to the clipboard. Protocol: docs/BRIDGE.md.
+// there, connectNative fails at once and Grab falls back to the clipboard. Protocol: docs/TUCKET_1.3.9_PRD.md §5.
 
 const HOST = 'com.arpitchandak.tucket';
 const STATUS_TTL_MS = 30_000;
-const HELLO_TIMEOUT_MS = 4000;
+const HELLO_TIMEOUT_MS = 8000; // the helper waits up to 5 s for a cold Tucket launch
 const REQUEST_TIMEOUT_MS = 30_000;
 
 let cached = null;
 let seq = 0;
 
-/** { state: 'connected', version, features } or { state: 'missing', reason } */
+/**
+ * { state: 'connected', version, features }
+ * { state: 'missing', reason }      no host registered: Tucket isn't installed, is older than
+ *                                   1.3.9, or its "Browser extension" switch is off
+ * { state: 'unavailable', reason }  the host is there but didn't answer (Tucket still launching)
+ */
 export async function status({ fresh = false } = {}) {
   if (!fresh && cached && Date.now() - cached.at < STATUS_TTL_MS) return cached.value;
   let value;
@@ -18,11 +23,15 @@ export async function status({ fresh = false } = {}) {
     const reply = await request('hello', {}, HELLO_TIMEOUT_MS);
     value = { state: 'connected', version: reply.version || '', features: reply.features || [] };
   } catch (err) {
-    value = { state: 'missing', reason: String(err?.message || err) };
+    const reason = String(err?.message || err);
+    value = { state: isMissing(reason) ? 'missing' : 'unavailable', reason };
   }
   cached = { at: Date.now(), value };
   return value;
 }
+
+// Chrome's own errors when no usable host manifest exists for this extension.
+export const isMissing = (reason) => /host not found|forbidden|disabled/i.test(String(reason));
 
 export function forget() {
   cached = null;

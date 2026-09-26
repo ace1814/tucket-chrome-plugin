@@ -36,7 +36,7 @@ them out side by side.
      *Download*, and "N more outlined on the page"
    - Unreadable: "This SVG lives on another site" with *Copy its link*
    - The strip of everything grabbed on this page
-6. **Footer.** "Connected to Tucket 1.3.8" with a green dot, or "Everything you grab can land in
+6. **Footer.** "Connected to Tucket 1.3.9" with a green dot, or "Everything you grab can land in
    Tucket · Get Tucket →", or on a non-Mac "Everything here copies and downloads."
 7. **Toast.** "Copied", "Sent to Tucket", "Copied — Tucket saved it", "Can't read that one — it's on another site".
 

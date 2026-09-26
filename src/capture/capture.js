@@ -1,5 +1,6 @@
-import { getCapture } from '../lib/idb.js';
+import { getCapture, putCapture } from '../lib/idb.js';
 import { buildPdf, pageSize } from '../lib/pdf.js';
+import * as tucket from '../lib/tucket.js';
 import { Markup, burnIn, COLOURS } from './markup.js';
 
 const FORMATS = {
@@ -9,6 +10,7 @@ const FORMATS = {
   pdf: { type: 'application/pdf', ext: 'pdf', label: 'PDF' },
 };
 let format = 'png';
+const FORMAT_KEY = 'saveFormat';
 
 // Markup state, shared by every part's editor.
 let tool = null;
@@ -91,24 +93,13 @@ function download(name, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-let captureMeta = {};
-
-async function sendPng(part) {
-  try {
-    const { via } = await TGSend.send('png', await finalBlob(part), captureMeta);
-    toast(TGSend.doneMessage(via, 1, await TGSend.hasTucket()));
-  } catch (err) {
-    toast('Couldn’t copy the image — click the page and try again');
-    console.error(err);
-  }
-}
-
 // ---------- markup toolbar ----------
 
 const KEYS = { a: 'arrow', r: 'box', h: 'highlight', t: 'text', b: 'blur' };
 
 function updateUndo() {
   $('#undo').disabled = history.length === 0;
+  markEdited();
 }
 
 function setTool(next) {
@@ -145,24 +136,290 @@ function setUpMarkup() {
     } else if (b.id === 'undo') undo();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest?.('input, textarea')) return;
+    if (e.target.closest?.('input, textarea') || document.querySelector('dialog[open]')) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
     if (e.key === 'Escape' && tool) { setTool(tool); return; }
     if (!e.metaKey && !e.ctrlKey && !e.altKey && KEYS[e.key.toLowerCase()]) setTool(KEYS[e.key.toLowerCase()]);
   });
 }
 
+
+// ---------- Tucket ----------
+// Everything Tucket does here goes over the native bridge straight from this page: auto-sync,
+// Extract text (op "ocr") and Remove background. Results come back and are shown in Grab.
+
+let capture = null;
+let bridge = { state: 'checking' };
+let sync = 'checking';
+let syncError = '';
+
+const pageMeta = () => ({ pageUrl: capture.pageUrl || '', pageTitle: capture.pageTitle || '' });
+const siteOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(',')[1]);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+// The bridge's error codes (and Chrome's), in words.
+function explain(err) {
+  const code = String(err?.message || err);
+  if (tucket.isMissing(code)) return 'Tucket isn’t connected.';
+  return {
+    'app-not-running': 'Tucket didn’t open in time. Open it and try again.',
+    disabled: 'The browser extension is switched off in Tucket’s Settings.',
+    'too-large': 'This one is too big for Tucket (over 25 MB). Try a selected area.',
+    timeout: 'Tucket took too long with this one.',
+    failed: 'Tucket couldn’t finish this one.',
+  }[code] || 'Tucket didn’t answer. Try again in a moment.';
+}
+
+const SYNC = {
+  checking: { label: 'Checking Tucket…', title: '' },
+  syncing: { label: 'Saving to Tucket…', title: '' },
+  synced: { label: 'In Tucket', title: () => `Saved to Tucket${siteOf(capture.pageUrl) ? `, filed under ${siteOf(capture.pageUrl)} with a link back to the page` : ''}.` },
+  edited: { label: 'Update Tucket', title: 'Your marks aren’t in Tucket yet. Click to save this version too.' },
+  failed: { label: 'Not saved · Retry', title: () => syncError },
+  off: { label: 'Not in Tucket', title: 'You need Tucket for this. Click to see why.' },
+};
+
+function setSync(state) {
+  sync = state;
+  const el = $('#sync');
+  el.hidden = state === 'hidden';
+  if (state === 'hidden') return;
+  const { label, title } = SYNC[state];
+  el.dataset.state = state;
+  $('#sync-label').textContent = label;
+  el.title = typeof title === 'function' ? title() : title;
+  el.setAttribute('aria-label', `${label}. ${el.title}`.trim());
+  el.disabled = state === 'checking' || state === 'syncing';
+}
+
+function markEdited() {
+  if (sync === 'synced' && history.length) setSync('edited');
+}
+
+// Every capture goes to Tucket by itself when Tucket is connected, with the page it came from.
+// It's never put on the clipboard instead: that would overwrite whatever the user copied last.
+async function autoSync({ force = false } = {}) {
+  if (bridge.state !== 'connected') return;
+  if (capture.syncedAt && !force) { setSync('synced'); return; }
+  setSync('syncing');
+  try {
+    for (const part of capture.parts) {
+      await tucket.request('ingest', { kind: 'image', data: await blobToBase64(await finalBlob(part)), ...pageMeta() });
+    }
+    capture.syncedAt = Date.now();
+    // Remember it, so reopening this page doesn't save it to Tucket twice.
+    putCapture({ ...capture, parts: capture.parts.map(({ markup, ...rest }) => rest) }).catch(() => {});
+    setSync('synced');
+  } catch (err) {
+    syncError = explain(err);
+    if (tucket.isMissing(err?.message)) { bridge = { state: 'missing' }; setSync('off'); return; }
+    setSync('failed');
+  }
+}
+
+async function onSyncClick() {
+  if (sync === 'off') { upsell('sync'); return; }
+  if (sync === 'synced') { toast('Already in Tucket'); return; }
+  if (sync === 'failed' && bridge.state !== 'connected') {
+    setSync('checking');
+    bridge = await tucket.status({ fresh: true });
+    if (bridge.state !== 'connected') { syncError = explain(bridge.reason); setSync(bridge.state === 'missing' ? 'off' : 'failed'); return; }
+  }
+  await autoSync({ force: true });
+}
+
+// ---------- the Tucket pop-up ----------
+
+const UPSELL = {
+  ocr: { title: 'Sorry, reading text is a Tucket thing', quip: 'Grab can see the words. Tucket can actually read them.', badge: 'Aa' },
+  cutout: { title: 'Sorry, the scissors are in Tucket', quip: 'Grab takes the picture. Tucket cuts out the good bit.', badge: '✂︎' },
+  sync: { title: 'Sorry, there’s no Tucket to save to', quip: 'Grab takes it. Tucket keeps it, with the page it came from.', badge: '↻' },
+};
+
+function upsell(kind) {
+  const copy = UPSELL[kind];
+  const mac = TGFooter.isMac();
+  $('#upsell-title').textContent = mac ? copy.title : 'Tucket is Mac-only, sorry';
+  $('#upsell-quip').textContent = mac ? copy.quip : 'Everything else here works as usual: mark up, save and copy.';
+  $('#upsell-badge').textContent = copy.badge;
+  // The perk they just reached for goes first.
+  const perks = $('#upsell-perks');
+  const first = perks.querySelector(`[data-perk="${kind}"]`);
+  if (first) perks.prepend(first);
+  perks.hidden = !mac;
+  const offer = TGFooter.OFFER;
+  $('#upsell-cta').hidden = !mac;
+  $('#upsell-cta').href = TGFooter.ctaUrl(`capture-${kind}`, { offer: true });
+  $('#upsell-offer').hidden = !offer;
+  if (offer) $('#upsell-offer').textContent = `${offer.percent}% off for Grab users`;
+  $('#upsell-fine').hidden = !mac;
+  $('#upsell-close').textContent = mac ? 'Maybe later' : 'Got it';
+  $('#upsell').showModal();
+}
+
+// ---------- Extract text and Remove background ----------
+
+const TOOLS = {
+  ocr: { op: 'ocr', busy: 'Reading…' },
+  cutout: { op: 'removeBackground', busy: 'Cutting out…' },
+};
+
+async function runTool(kind, btn) {
+  if (bridge.state === 'checking') bridge = await tucket.status();
+  if (bridge.state === 'missing') { upsell(kind); return; }
+  const { op, busy } = TOOLS[kind];
+  if (bridge.state === 'connected' && !bridge.features?.includes(op)) {
+    toast('Update Tucket to 1.3.9 for this');
+    return;
+  }
+  const label = btn.querySelector('span');
+  const idle = label.textContent;
+  const all = document.querySelectorAll('[data-tool]');
+  for (const b of all) b.disabled = true;
+  btn.classList.add('busy');
+  label.textContent = busy;
+  try {
+    if (kind === 'ocr') {
+      // Marks are burned in first, so text under a blur is never read (or saved).
+      const texts = [];
+      for (const part of capture.parts) {
+        const res = await tucket.request('ocr', { image: await blobToBase64(await finalBlob(part)), ...pageMeta() });
+        if (res.text?.trim()) texts.push(res.text.trim());
+      }
+      showText(texts.join('\n\n'));
+    } else {
+      const part = capture.parts[0];
+      const res = await tucket.request('removeBackground', { image: await blobToBase64(await finalBlob(part)), ...pageMeta() });
+      const blob = await (await fetch(`data:image/png;base64,${res.image}`)).blob();
+      showCutout(blob);
+    }
+    bridge = { ...bridge, state: 'connected' };
+  } catch (err) {
+    if (tucket.isMissing(err?.message)) { bridge = { state: 'missing' }; upsell(kind); }
+    else toast(explain(err));
+    console.error(err);
+  } finally {
+    for (const b of all) b.disabled = false;
+    btn.classList.remove('busy');
+    label.textContent = idle;
+  }
+}
+
+function resultSheet(title, meta, actions) {
+  $('#result-title').textContent = title;
+  $('#result-meta').textContent = meta;
+  $('#result-actions').replaceChildren(...actions);
+  $('#result-text').hidden = true;
+  $('#result-image').hidden = true;
+  const sheet = $('#result');
+  if (!sheet.open) sheet.showModal();
+}
+
+function showText(text) {
+  const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
+  if (!words) {
+    resultSheet('No text found', 'Tucket looked, but there’s no readable text in this one.', [button('Close', 'sheet-btn primary', () => $('#result').close())]);
+    return;
+  }
+  resultSheet('Text from this screenshot', `${words} word${words === 1 ? '' : 's'} · Saved in Tucket too, so you can search for it later`, [
+    button('Copy text', 'sheet-btn primary', async () => {
+      try { await TGSend.text(text); toast('Text copied'); } catch { toast('Couldn’t copy — click the page and try again'); }
+    }),
+    button('Save as .txt', 'sheet-btn', () => {
+      download(fileName(capture, 0, 1).replace(/\.\w+$/, '.txt'), new Blob([text], { type: 'text/plain' }));
+    }),
+  ]);
+  const area = $('#result-text');
+  area.value = text;
+  area.hidden = false;
+  area.scrollTop = 0;
+}
+
+async function showCutout(blob) {
+  const url = URL.createObjectURL(blob);
+  const bmp = await createImageBitmap(blob);
+  const size = `${bmp.width} × ${bmp.height}px`;
+  bmp.close();
+  resultSheet('Background removed', `${size} · Saved in Tucket too`, [
+    button('Copy image', 'sheet-btn primary', async () => {
+      try { await TGSend.png(blob); toast('Image copied'); } catch { toast('Couldn’t copy — click the page and try again'); }
+    }),
+    button('Save PNG', 'sheet-btn', () => download(fileName(capture, 0, 1).replace(/\.\w+$/, ' cut-out.png'), blob)),
+  ]);
+  const img = $('#result-img');
+  if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+  img.src = url;
+  $('#result-image').hidden = false;
+}
+
+// ---------- Save as ----------
+
+function setFormat(next) {
+  format = FORMATS[next] ? next : 'png';
+  for (const b of document.querySelectorAll('#save-menu [data-format]')) b.setAttribute('aria-checked', String(b.dataset.format === format));
+  const n = capture.parts.length;
+  const { label } = FORMATS[format];
+  $('#save-main').textContent = n > 1 && format !== 'pdf' ? `Save ${n} as ${label}` : `Save as ${label}`;
+  for (const b of document.querySelectorAll('.part-head .save-part')) b.textContent = `Save as ${label}`;
+}
+
+function toggleMenu(open = $('#save-menu').hidden) {
+  $('#save-menu').hidden = !open;
+  $('#save-more').setAttribute('aria-expanded', String(open));
+  if (open) $(`#save-menu [data-format="${format}"]`).focus();
+}
+
+function setUpSave() {
+  chrome.storage.local.get(FORMAT_KEY).then((r) => { if (r[FORMAT_KEY]) setFormat(r[FORMAT_KEY]); }).catch(() => {});
+  $('#save-main').onclick = () => saveParts(capture, capture.parts);
+  $('#save-more').onclick = (e) => { e.stopPropagation(); toggleMenu(); };
+  // Picking a format saves in it straight away, and it becomes the button's format.
+  $('#save-menu').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-format]');
+    if (!b) return;
+    setFormat(b.dataset.format);
+    chrome.storage.local.set({ [FORMAT_KEY]: format }).catch(() => {});
+    toggleMenu(false);
+    saveParts(capture, capture.parts);
+  });
+  $('#save-menu').addEventListener('keydown', (e) => {
+    const items = [...$('#save-menu').querySelectorAll('[data-format]')];
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    } else if (e.key === 'Escape') {
+      e.stopPropagation();
+      toggleMenu(false);
+      $('#save-more').focus();
+    }
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#save')) toggleMenu(false); });
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveParts(capture, capture.parts); }
+  });
+}
+
+// ---------- boot ----------
+
 async function boot() {
-  TGFooter.mount($('#footer'), 'capture');
   const id = new URLSearchParams(location.search).get('id');
-  const capture = id ? await getCapture(id).catch(() => null) : null;
+  capture = id ? await getCapture(id).catch(() => null) : null;
   if (!capture) {
+    TGFooter.mount($('#footer'), 'capture');
     $('#missing').hidden = false;
     return;
   }
 
   const { parts, notes = [] } = capture;
-  captureMeta = { pageUrl: capture.pageUrl, pageTitle: capture.pageTitle };
   const labels = { full: 'Full page', visible: 'Visible area', region: 'Selected region' };
   document.title = `${capture.pageTitle || 'Screenshot'} — Tucket Grab`;
   $('#page-title').textContent = capture.pageTitle || capture.pageUrl || 'Screenshot';
@@ -183,12 +440,7 @@ async function boot() {
     const meta = document.createElement('span');
     meta.textContent = `${parts.length > 1 ? `Part ${i + 1} of ${parts.length} · ` : ''}${part.width} × ${part.height}px · ${(part.blob.size / 1e6).toFixed(1)} MB`;
     head.append(meta);
-    if (parts.length > 1) {
-      head.append(
-        button('Send to Tucket', 'btn primary', () => sendPng(part)),
-        button('Save', 'btn', () => saveParts(capture, [part], i)),
-      );
-    }
+    if (parts.length > 1) head.append(button('Save as PNG', 'btn save-part', () => saveParts(capture, [part], i)));
     const img = Object.assign(document.createElement('img'), { src: url, alt: `Screenshot${parts.length > 1 ? ` part ${i + 1}` : ''}` });
     const stage = document.createElement('div');
     stage.className = 'stage';
@@ -205,41 +457,25 @@ async function boot() {
   });
 
   $('#top-actions').hidden = false;
-  if (parts.length > 1) {
-    $('#send-first').hidden = true;
-    $('#save-all').textContent = `Save all ${parts.length}`;
-  }
-  $('#send-first').onclick = () => sendPng(parts[0]);
+  setFormat('png');
+  setUpSave();
   setUpMarkup();
 
-  // Tucket tools live here, after a capture, rather than as a pitch in the panel.
-  $('#lock-cta').href = TGFooter.ctaUrl('capture-tools');
-  if (!/mac/i.test(navigator.userAgentData?.platform || navigator.platform || '')) {
-    $('#lock-body').textContent = 'Tucket reads text and lifts subjects on the Mac, with Apple’s on-device Vision. It’s Mac-only, so these two aren’t available here — saving and copying work as usual.';
-    $('#lock-cta').hidden = true;
-    $('#lock-fine').hidden = true;
-    $('#lock-close').textContent = 'Got it';
+  $('#upsell-close').onclick = () => $('#upsell').close();
+  $('#result-close').onclick = () => $('#result').close();
+  for (const d of document.querySelectorAll('dialog')) {
+    d.addEventListener('click', (e) => { if (e.target === d) d.close(); }); // click outside the sheet
   }
-  $('#format').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-format]');
-    if (!btn) return;
-    format = btn.dataset.format;
-    for (const b of $('#format').querySelectorAll('[data-format]')) b.setAttribute('aria-pressed', String(b.dataset.format === format));
-    $('#save-all').textContent = format === 'pdf' || parts.length === 1 ? 'Save' : `Save all ${parts.length}`;
-  });
+  for (const btn of document.querySelectorAll('[data-tool]')) btn.onclick = () => runTool(btn.dataset.tool, btn);
+  $('#sync').onclick = onSyncClick;
 
-  $('#lock-close').onclick = () => { $('#lock-card').hidden = true; };
-  for (const btn of document.querySelectorAll('[data-tool]')) {
-    btn.onclick = async () => {
-      if (!(await TGSend.hasTucket())) {
-        $('#lock-card').hidden = false;
-        return;
-      }
-      const res = await chrome.runtime.sendMessage({ type: 'tool:start', tool: btn.dataset.tool, captureId: id }).catch(() => null);
-      if (!res?.ok) toast(res?.error || 'Tucket didn’t answer');
-    };
-  }
-  $('#save-all').onclick = () => saveParts(capture, parts);
+  // Ask Tucket once, fresh, and let the footer show the same answer.
+  setSync(TGFooter.isMac() ? 'checking' : 'hidden');
+  bridge = await tucket.status({ fresh: true });
+  TGFooter.mount($('#footer'), 'capture', bridge);
+  if (bridge.state === 'connected') await autoSync();
+  else if (bridge.state === 'unavailable') { syncError = explain(bridge.reason); setSync('failed'); }
+  else setSync(TGFooter.isMac() ? 'off' : 'hidden');
 }
 
 boot();

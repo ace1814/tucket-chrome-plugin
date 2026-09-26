@@ -1,4 +1,4 @@
-// "Send to Tucket". When Tucket 1.3.8+ is connected, captures go straight to it over the bridge and
+// "Send to Tucket". When Tucket 1.3.9+ is connected, captures go straight to it over the bridge and
 // the clipboard is left alone. Otherwise they go to the clipboard, where any Tucket version (or
 // the user's own paste) picks them up. Classic script; defines globalThis.TGSend.
 (() => {

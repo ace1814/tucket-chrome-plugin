@@ -9,19 +9,111 @@ body { background: var(--bg-2); min-height: 100vh; display: flex; flex-direction
 .page { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .page strong, .page span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page span { color: var(--fg-2); font-size: 12px; }
-.top-actions { display: flex; gap: 8px; align-items: center; }
-.tools { display: flex; gap: 8px; padding-right: 10px; margin-right: 2px; border-right: 1px solid var(--line); }
-.seg { display: inline-flex; padding: 2px; border-radius: 999px; background: var(--bg-2); margin-right: 2px; }
-.seg button { padding: 5px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 650; color: var(--fg-2); }
-.seg button[aria-pressed="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 
-.lock-card { margin: 16px auto 0; max-width: 520px; width: calc(100% - 40px); padding: 16px 18px; border-radius: 16px;
-  background: var(--bg); border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0,0,0,.08); }
-.lock-card strong { font-size: 14px; }
-.lock-card p { color: var(--fg-2); margin: 6px 0 0; }
-.lock-card .fine { font-size: 12px; color: var(--fg-3); }
-.lock-actions { display: flex; gap: 8px; margin-top: 12px; }
-.lock-actions .btn { text-decoration: none; }
+/* Sync badge: is this capture in Tucket? */
+.sync { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 9px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 600; color: var(--fg-2); background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--line);
+  transition: background .15s, color .15s; white-space: nowrap; }
+.sync:hover:not(:disabled) { background: var(--bg-3); color: var(--fg); }
+.sync:disabled { cursor: default; }
+.sync-icon { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; flex: none; background: var(--fg-3); color: #fff; }
+.sync-icon::before { content: ""; width: 10px; height: 10px; background: currentColor; -webkit-mask: var(--glyph) center / contain no-repeat; mask: var(--glyph) center / contain no-repeat; }
+.sync[data-state="synced"] { color: var(--ok-fg); background: var(--ok-bg); box-shadow: inset 0 0 0 1px var(--ok-line); }
+.sync[data-state="synced"] .sync-icon { background: var(--ok); --glyph: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9.5 18 20 6.5"/></svg>'); }
+.sync[data-state="off"] .sync-icon { --glyph: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>'); }
+.sync[data-state="failed"] { color: var(--warn-fg); background: var(--warn-bg); box-shadow: inset 0 0 0 1px var(--warn-line); }
+.sync[data-state="failed"] .sync-icon { background: var(--warn); --glyph: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="4" stroke-linecap="round"><path d="M12 5v9M12 19v.5"/></svg>'); }
+.sync[data-state="edited"] { color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
+.sync[data-state="edited"] .sync-icon { background: var(--accent); }
+.sync[data-state="edited"] .sync-icon, .sync[data-state="checking"] .sync-icon, .sync[data-state="syncing"] .sync-icon {
+  --glyph: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3"/><path d="M18 2.5v4.2h-4.2M6 21.5v-4.2h4.2"/></svg>'); }
+.sync[data-state="checking"] .sync-icon, .sync[data-state="syncing"] .sync-icon { background: var(--accent); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Tucket tools: solid, outlined controls, so they read as buttons on the white bar. */
+.tools { display: flex; gap: 8px; padding: 0 12px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+.tool-btn { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px; border-radius: 10px;
+  font-size: 13px; font-weight: 600; color: var(--fg); background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-strong), 0 1px 2px rgba(0,0,0,.06); transition: background .15s, box-shadow .15s, transform .1s; white-space: nowrap; }
+.tool-btn svg { color: var(--accent); flex: none; }
+.tool-btn:hover:not(:disabled) { background: var(--bg-2); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--line-strong)), 0 1px 2px rgba(0,0,0,.06); }
+.tool-btn:active:not(:disabled) { transform: scale(.97); }
+.tool-btn:disabled { opacity: .55; cursor: default; }
+.tool-btn.busy { opacity: 1; }
+.tool-btn.busy svg { animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* Save as: a split button. The left half saves in the chosen format, the chevron picks another. */
+.save { position: relative; display: inline-flex; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.save-main, .save-more { height: 34px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 650; transition: background .15s; }
+.save-main { padding: 0 14px; border-radius: 10px 0 0 10px; white-space: nowrap; }
+.save-more { width: 32px; border-radius: 0 10px 10px 0; display: grid; place-items: center; box-shadow: inset 1px 0 0 rgba(255,255,255,.28); }
+.save-main:hover, .save-more:hover, .save-more[aria-expanded="true"] { background: var(--accent-2); }
+.menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 240px; padding: 5px; border-radius: 12px;
+  background: var(--bg); box-shadow: 0 0 0 1px var(--line), 0 12px 32px rgba(0,0,0,.16); display: grid; }
+.menu button { display: grid; grid-template-columns: 18px 1fr; column-gap: 8px; align-items: baseline; text-align: left; padding: 8px 10px; border-radius: 8px; }
+.menu button::before { content: ""; grid-row: span 2; width: 14px; height: 14px; align-self: center;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9.5 18 20 6.5"/></svg>') center / contain no-repeat;
+  mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 9.5 18 20 6.5"/></svg>') center / contain no-repeat; }
+.menu button[aria-checked="true"]::before { background: var(--accent); }
+.menu button:hover, .menu button:focus-visible { background: var(--bg-2); outline: none; }
+.menu strong { font-size: 13px; }
+.menu span { grid-column: 2; color: var(--fg-2); font-size: 12px; }
+
+/* Sheets: the Tucket pop-up and tool results. */
+dialog.sheet { border: 0; padding: 0; border-radius: 20px; background: var(--bg); color: var(--fg); max-width: calc(100vw - 32px);
+  box-shadow: 0 0 0 .5px rgba(0,0,0,.12), 0 30px 80px rgba(0,0,0,.3); }
+dialog.sheet::backdrop { background: rgba(10,10,20,.38); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+dialog.sheet[open] { animation: rise .22s cubic-bezier(.2,.8,.2,1); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.98); } }
+
+dialog.upsell { width: 440px; padding: 28px 28px 22px; text-align: center; }
+.upsell-art { position: relative; width: 64px; height: 64px; margin: 0 auto 14px; }
+.upsell-art img { border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.upsell-badge { position: absolute; right: -10px; bottom: -8px; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 999px;
+  display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff; background: var(--accent); box-shadow: 0 0 0 3px var(--bg); }
+.upsell h2 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
+.upsell .quip { margin: 6px 0 18px; color: var(--fg-2); font-size: 14px; }
+.perks { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 2px; text-align: left; }
+.perks li { display: grid; grid-template-columns: 22px 1fr; column-gap: 10px; padding: 8px 10px; border-radius: 10px; }
+.perks li::before { content: ""; grid-row: span 2; margin-top: 2px; width: 20px; height: 20px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%236c6cf8" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12.5 10 16.5 18 8"/></svg>');
+  background-size: 12px; background-position: center; background-repeat: no-repeat; }
+.perks li:first-child { background: var(--bg-2); }
+.perks strong { font-size: 13.5px; }
+.perks span { grid-column: 2; color: var(--fg-2); font-size: 12.5px; }
+.upsell-actions { display: grid; gap: 6px; }
+.cta { display: flex; align-items: center; justify-content: center; gap: 10px; height: 44px; border-radius: 12px; text-decoration: none;
+  background: var(--accent); color: var(--on-accent); font-weight: 650; font-size: 14.5px; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent); }
+.cta:hover { background: var(--accent-2); }
+.offer { padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,.22); font-size: 12px; font-weight: 700; }
+.ghost { height: 36px; border-radius: 10px; color: var(--fg-2); font-weight: 600; }
+.ghost:hover { background: var(--bg-2); color: var(--fg); }
+.upsell .fine { margin: 10px 0 0; font-size: 12px; color: var(--fg-3); }
+
+dialog.result { width: 640px; padding: 20px; }
+.result-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.result-head > div { flex: 1; min-width: 0; }
+.result h2 { margin: 0; font-size: 17px; }
+.result-meta { margin: 3px 0 0; color: var(--fg-2); font-size: 12.5px; }
+.close { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--fg-2); background: var(--bg-2); flex: none; }
+.close:hover { background: var(--bg-3); color: var(--fg); }
+.result-text { display: block; width: 100%; height: min(52vh, 420px); resize: vertical; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--bg-2); color: var(--fg); font: 13px/1.55 var(--mono); outline: none; }
+.result-image { border-radius: 12px; overflow: auto; max-height: 56vh; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--line); }
+.result-image img { display: block; max-width: 100%; height: auto; }
+.result-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.sheet-btn { height: 36px; padding: 0 16px; border-radius: 10px; font-weight: 650; background: var(--bg-2); box-shadow: inset 0 0 0 1px var(--line); }
+.sheet-btn:hover { background: var(--bg-3); }
+.sheet-btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.sheet-btn.primary:hover { background: var(--accent-2); }
+
+@media (max-width: 1100px) {
+  .top { flex-wrap: wrap; }
+  .page { flex-basis: calc(100% - 160px); }
+  .top-actions { width: 100%; justify-content: flex-start; }
+}
 
 .notes { margin: 16px auto 0; padding: 10px 14px 10px 30px; max-width: 900px; width: calc(100% - 40px);
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); color: var(--fg-2); }
@@ -31,7 +123,7 @@ main { flex: 1; padding: 20px 20px 104px; display: grid; gap: 24px; justify-item
 .part { width: 100%; max-width: 1100px; }
 .part-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .part-head span { flex: 1; color: var(--fg-2); font-size: 12px; }
-.part-head .btn { padding: 6px 10px; font-size: 12px; }
+.part-head .btn { padding: 6px 10px; font-size: 12px; box-shadow: inset 0 0 0 1px var(--line); }
 .part img { display: block; width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 16px rgba(0,0,0,.12), 0 0 0 1px rgba(0,0,0,.06); background: #fff; }
 
 .tg-footer { background: var(--bg); justify-content: center; gap: 16px; padding-bottom: 84px; } /* clears the markup bar */

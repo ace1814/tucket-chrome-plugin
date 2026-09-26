@@ -5,7 +5,10 @@
   if (globalThis.TGFooter) return;
 
   const SITE = 'https://trytucket.com/';
-  const ctaUrl = (medium) => `${SITE}?utm_source=chrome-extension&utm_medium=${encodeURIComponent(medium)}&utm_campaign=grab`;
+  // The Grab-user discount, shown in the Tucket pop-up on the result page. The site reads
+  // ?offer= and applies it at checkout; set this to null to stop showing it.
+  const OFFER = { percent: 20, code: 'grab20' };
+  const ctaUrl = (medium, { offer = false } = {}) => `${SITE}?utm_source=chrome-extension&utm_medium=${encodeURIComponent(medium)}&utm_campaign=grab${offer && OFFER ? `&offer=${OFFER.code}` : ''}`;
   const isMac = () => /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 
   function h(tag, props = {}, ...children) {
@@ -14,9 +17,12 @@
     return el;
   }
 
-  async function mount(el, medium) {
-    let status = { state: 'missing' };
-    try { status = (await chrome.runtime.sendMessage({ type: 'tucket:status' })) || status; } catch { /* keep */ }
+  // status: pass one in when the page has already asked Tucket, so both agree.
+  async function mount(el, medium, status = null) {
+    if (!status) {
+      status = { state: 'missing' };
+      try { status = (await chrome.runtime.sendMessage({ type: 'tucket:status' })) || status; } catch { /* keep */ }
+    }
     el.replaceChildren();
     if (status.state === 'connected') {
       el.append(h('span', { className: 'tg-on' }), h('span', { className: 'tg-muted', textContent: `Connected to Tucket ${status.version || ''}`.trim() }));
@@ -31,5 +37,5 @@
     return status;
   }
 
-  globalThis.TGFooter = { mount, ctaUrl };
+  globalThis.TGFooter = { mount, ctaUrl, isMac, OFFER };
 })();

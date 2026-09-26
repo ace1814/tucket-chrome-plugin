@@ -18,19 +18,44 @@
     setTimeout(finish, 100);
   });
 
-  // Docs sites and web apps often lock the window and scroll a panel instead. Every element is
-  // considered: busy pages (a LinkedIn profile has tens of thousands) put the panel late in the DOM.
+  // Whether something really scrolls is tested, not read from CSS: nudge it and see if it moved.
+  // Pages lock the window in several ways (overflow on html, on body, a full-window fixed shell),
+  // and CSS alone doesn't say which element ends up scrolling.
+  function nudges(el) {
+    if (el === window) {
+      const y = scrollY;
+      window.scrollTo(0, y + 64);
+      let moved = scrollY !== y;
+      if (!moved && y > 0) { window.scrollTo(0, y - 64); moved = scrollY !== y; }
+      window.scrollTo(0, y);
+      return moved;
+    }
+    const t = el.scrollTop;
+    el.scrollTop = t + 64;
+    let moved = el.scrollTop !== t;
+    if (!moved && t > 0) { el.scrollTop = t - 64; moved = el.scrollTop !== t; }
+    el.scrollTop = t;
+    return moved;
+  }
+
+  // Docs sites and web apps often lock the window and scroll a panel (or <body> itself) instead.
+  // Every element is considered: busy pages (a LinkedIn profile has tens of thousands) put the
+  // panel late in the DOM. The biggest one that really scrolls wins.
   function findInnerScroller() {
     let best = null;
     let bestArea = 0;
-    const all = document.body ? document.body.getElementsByTagName('*') : [];
+    const all = document.body ? [document.body, ...document.body.getElementsByTagName('*')] : [];
     for (const el of all) {
       if (el.scrollHeight <= el.clientHeight + 40) continue;
       if (el.clientHeight < innerHeight * 0.4 || el.clientWidth < innerWidth * 0.4) continue;
+      if (el.localName === 'tucket-grab') continue;
+      // overflow: hidden scrolls from script too (carousels, clipped wrappers); those aren't the page.
       const oy = getComputedStyle(el).overflowY;
       if (oy !== 'auto' && oy !== 'scroll' && oy !== 'overlay') continue;
       const area = el.clientWidth * el.clientHeight;
-      if (area > bestArea) { best = el; bestArea = area; }
+      if (area <= bestArea || !nudges(el)) continue;
+      best = el;
+      bestArea = area;
     }
     return best;
   }
@@ -46,7 +71,7 @@
       + ' animation-duration: 0s !important; animation-delay: 0s !important; }';
     document.documentElement.appendChild(style);
 
-    const windowScrolls = root.scrollHeight > innerHeight + 4;
+    const windowScrolls = root.scrollHeight > innerHeight + 4 && nudges(window);
     const scroller = windowScrolls ? null : findInnerScroller();
     state = {
       style,
@@ -55,7 +80,15 @@
       y: scrollY,
       innerTop: scroller ? scroller.scrollTop : 0,
       touched: new Map(), // element → original inline visibility
+      onKey: (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        chrome.runtime.sendMessage({ type: 'shot:stop' }).catch(() => {});
+      },
     };
+    // Esc during a long capture stops it and keeps what's been captured so far.
+    window.addEventListener('keydown', state.onKey, true);
     return measure();
   }
 
@@ -138,6 +171,7 @@
       else el.style.removeProperty('visibility');
     }
     state.style.remove();
+    window.removeEventListener('keydown', state.onKey, true);
     if (state.scroller) state.scroller.scrollTop = state.innerTop;
     window.scrollTo(state.x, state.y);
     state = null;

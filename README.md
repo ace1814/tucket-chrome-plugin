@@ -17,7 +17,7 @@ Click the toolbar icon (or press ⌥⇧G) and a glass panel opens over the page,
 
 ## How it reaches Tucket
 
-With Tucket 1.3.8 or newer, captures go straight to it over Chrome native messaging (protocol in `docs/BRIDGE.md`), and Tucket's on-device OCR and background removal unlock on the screenshot result page.
+With Tucket 1.3.9 or newer, captures go straight to it over Chrome native messaging (protocol in `docs/TUCKET_1.3.9_PRD.md`), and Tucket's on-device OCR and background removal unlock on the screenshot result page.
 Without it, captures go to the clipboard. Any Tucket version polls it every 250ms and files each one: a colour literal becomes a named **Colour** clip, SVG markup an **Icon** or **SVG** clip, a PNG an **Image** clip.
 
 ## Permissions

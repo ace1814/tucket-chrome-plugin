@@ -35,7 +35,19 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
 
 // ---------- toolbar → panel ----------
 
-chrome.action.onClicked.addListener((tab) => togglePanel(tab));
+// During a capture, the toolbar icon (and the shortcuts) stop it instead: the panel is hidden then,
+// and this is the always-visible way to say "that's enough of this very long page".
+chrome.action.onClicked.addListener((tab) => {
+  if (job && job.tabId === tab.id) { stopShot(); return; }
+  togglePanel(tab);
+});
+
+function stopShot() {
+  if (!job) return false;
+  job.stopped = true;
+  report({ ...job.progress, phase: job.progress.phase === 'loading' ? 'loading' : 'stopping' });
+  return true;
+}
 
 async function togglePanel(tab) {
   try {
@@ -65,7 +77,7 @@ chrome.commands.onCommand.addListener((command, tab) => runCommand(command, tab)
 function runCommand(command, tab) {
   const mode = COMMAND_MODES[command];
   if (!mode || !tab?.id) return false;
-  if (job) return false;
+  if (job) return stopShot();
   runShot({ mode, tabId: tab.id });
   return true;
 }
@@ -93,6 +105,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (job) job.cancelled = true;
       sendResponse({ ok: true });
       return;
+    case 'shot:stop':
+      sendResponse({ ok: stopShot() });
+      return;
     case 'shot:status':
       sendResponse({ progress: job ? job.progress : null });
       return;
@@ -105,9 +120,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'fonts:lookup':
       lookupFonts(msg.families || []).then(sendResponse);
       return true;
-    case 'tool:start':
-      sendResponse({ ok: false, error: 'This arrives with Tucket 1.3.8.' });
-      return;
   }
 });
 
@@ -181,6 +193,9 @@ function report(progress) {
   chrome.runtime.sendMessage({ type: 'shot:progress', progress }).catch(() => {});
   if (tabId != null) chrome.tabs.sendMessage(tabId, { type: 'shot:progress', progress }).catch(() => {});
   if (!tabId) return;
+  if (progress.phase === 'capturing' || progress.phase === 'loading') {
+    chrome.action.setTitle({ tabId, title: 'Capturing… click (or press Esc) to stop and keep what’s done' }).catch(() => {});
+  }
   if (progress.phase === 'capturing' && progress.total > 1) {
     chrome.action.setBadgeBackgroundColor({ color: '#6C6CF8', tabId });
     chrome.action.setBadgeText({ text: `${Math.round((progress.current / progress.total) * 100)}%`, tabId });
@@ -530,6 +545,7 @@ async function runShot({ mode, tabId }) {
     report({ phase: 'error', mode, message: friendlyError(err) });
   } finally {
     chrome.action.setBadgeText({ text: '', tabId }).catch(() => {});
+    chrome.action.setTitle({ tabId, title: 'Tucket Grab' }).catch(() => {});
     job = null;
   }
 }
@@ -568,8 +584,11 @@ async function shootFullPage(tab) {
   try {
     // 1. One quick pass down the page so lazy images and scroll-triggered content load.
     const passSteps = Math.min(MAX_FRAMES, Math.ceil(info.totalH / info.stepH));
+    let loadedTo = info.totalH;
     for (let i = 1; i < passSteps; i++) {
       if (job.cancelled) return null;
+      // Stopped while loading: capture down to where loading got to (Esc again stops that too).
+      if (job.stopped) { loadedTo = i * info.stepH; job.stopped = false; notes.push('Stopped early at your request, so the capture ends where it had reached.'); break; }
       report({ phase: 'loading', mode: 'full', current: i, total: passSteps - 1 });
       await call(tabId, 'shot.scrollTo', i * info.stepH);
       await sleep(LAZY_STEP_MS);
@@ -582,7 +601,7 @@ async function shootFullPage(tab) {
     //    between them (a header the page reveals on scroll, a sticky rail that has stuck, a
     //    chat or messaging bar, an app's sidebar and composer) is chrome and is left out; only the
     //    band that actually scrolled is stitched in. That holds whatever the page's markup says.
-    let maxScroll = Math.max(0, info.totalH - info.stepH);
+    let maxScroll = Math.max(0, Math.min(info.totalH, loadedTo) - info.stepH);
     const estimate = 1 + Math.ceil(maxScroll / (info.stepH * OVERLAP));
     let count = 0;
     const screen = async (y, bottomOnly) => {
@@ -634,6 +653,11 @@ async function shootFullPage(tab) {
 
     while (prev.y < maxScroll - 0.5) {
       if (job.cancelled) return null;
+      if (job.stopped) {
+        if (!notes.some((n) => n.startsWith('Stopped early'))) notes.push('Stopped early at your request, so the capture ends where it had reached.');
+        maxScroll = prev.y;
+        break;
+      }
       if (frames >= MAX_FRAMES) {
         notes.push(`This page is very long, so the capture stops after ${MAX_FRAMES} screens.`);
         maxScroll = prev.y;

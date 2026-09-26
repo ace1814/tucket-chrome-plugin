@@ -244,7 +244,7 @@
           <button class="tile" data-shot="visible">${I.visible}<span>Visible area</span></button>
           <button class="tile" data-shot="region">${I.region}<span>Selected area</span></button>
         </div>
-        ${s.shotError ? `<p class="error">${esc(s.shotError)}</p>` : '<p class="note">Sticky headers show once and lazy images load first. Save as PNG, JPEG, WebP or PDF.</p>'}`;
+        ${s.shotError ? `<p class="error">${esc(s.shotError)}</p>` : '<p class="note">Sticky headers show once and lazy images load first. Very long page? Press Esc, or click the Grab icon, to stop and keep what’s captured.</p>'}`;
     }
 
     async function startShot(mode) {

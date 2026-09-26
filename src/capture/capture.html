@@ -18,31 +18,37 @@
       <span id="page-meta"></span>
     </div>
     <div class="top-actions" id="top-actions" hidden>
+      <!-- Whether this capture is in Tucket. Captures go there by themselves when Tucket is connected. -->
+      <button type="button" class="sync" id="sync" data-state="checking" hidden>
+        <span class="sync-icon" aria-hidden="true"></span>
+        <span class="sync-label" id="sync-label">Checking Tucket…</span>
+      </button>
+
       <div class="tools" role="group" aria-label="Tucket tools">
-        <button type="button" class="btn" data-tool="ocr">Copy text</button>
-        <button type="button" class="btn" data-tool="cutout">Remove background</button>
+        <button type="button" class="tool-btn" data-tool="ocr" title="Pull the text out of this screenshot, with Tucket">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M8 9h8M12 9v7"/></svg>
+          <span>Extract text</span>
+        </button>
+        <button type="button" class="tool-btn" data-tool="cutout" title="Lift the subject off its background, with Tucket">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/></svg>
+          <span>Remove background</span>
+        </button>
       </div>
-      <div class="seg" id="format" role="group" aria-label="File format">
-        <button type="button" data-format="png" aria-pressed="true">PNG</button>
-        <button type="button" data-format="jpeg" aria-pressed="false">JPEG</button>
-        <button type="button" data-format="webp" aria-pressed="false">WebP</button>
-        <button type="button" data-format="pdf" aria-pressed="false">PDF</button>
+
+      <div class="save" id="save">
+        <button type="button" class="save-main" id="save-main">Save as PNG</button>
+        <button type="button" class="save-more" id="save-more" aria-haspopup="menu" aria-expanded="false" aria-controls="save-menu" title="Choose a format">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu" id="save-menu" role="menu" aria-label="Save as" hidden>
+          <button type="button" role="menuitemradio" data-format="png" aria-checked="true"><strong>PNG</strong><span>Sharpest, keeps transparency</span></button>
+          <button type="button" role="menuitemradio" data-format="jpeg" aria-checked="false"><strong>JPEG</strong><span>Smaller, easy to share</span></button>
+          <button type="button" role="menuitemradio" data-format="webp" aria-checked="false"><strong>WebP</strong><span>Smallest, made for the web</span></button>
+          <button type="button" role="menuitemradio" data-format="pdf" aria-checked="false"><strong>PDF</strong><span>One document, true page size</span></button>
+        </div>
       </div>
-      <button type="button" class="btn primary" id="send-first">Send to Tucket</button>
-      <button type="button" class="btn" id="save-all">Save</button>
     </div>
   </header>
-
-  <!-- Shown only when someone taps a Tucket tool without Tucket connected. -->
-  <section class="lock-card" id="lock-card" hidden>
-    <strong>This one happens in Tucket</strong>
-    <p id="lock-body">Tucket reads text and lifts subjects right on your Mac, with Apple’s on-device Vision. Nothing is uploaded — that’s why it lives in the app, not the browser.</p>
-    <div class="lock-actions">
-      <a class="btn primary" id="lock-cta" target="_blank" rel="noopener">Get Tucket for Mac</a>
-      <button type="button" class="btn" id="lock-close">Not now</button>
-    </div>
-    <p class="fine" id="lock-fine">Already have it? Update to Tucket 1.3.8 and open it once.</p>
-  </section>
 
   <ul class="notes" id="notes" hidden></ul>
   <p class="missing" id="missing" hidden>This screenshot is no longer available. Captures are kept on this computer for a day.</p>
@@ -61,6 +67,41 @@
     <span class="sep" aria-hidden="true"></span>
     <button type="button" id="undo" title="Undo (⌘Z)" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
   </div>
+
+  <!-- Shown when a Tucket tool (or the sync badge) is tapped without Tucket connected. -->
+  <dialog class="sheet upsell" id="upsell" aria-labelledby="upsell-title">
+    <div class="upsell-art" aria-hidden="true">
+      <img src="../../icons/icon-128.png" alt="" width="64" height="64">
+      <span class="upsell-badge" id="upsell-badge"></span>
+    </div>
+    <h2 id="upsell-title">Sorry, that trick lives in Tucket</h2>
+    <p class="quip" id="upsell-quip">Grab takes the picture. Tucket does the clever bits.</p>
+    <ul class="perks" id="upsell-perks">
+      <li data-perk="ocr"><strong>Text out of any screenshot</strong><span>Menus, mockups, error messages. Copy the words, not a picture of them.</span></li>
+      <li data-perk="cutout"><strong>Backgrounds, gone</strong><span>Lift a product or a person out in one click. No Photoshop.</span></li>
+      <li data-perk="sync"><strong>Every grab, kept</strong><span>Screenshots, colours and SVGs land in one searchable place, with the site they came from.</span></li>
+      <li data-perk="private"><strong>Never leaves your Mac</strong><span>Apple’s on-device Vision does the work. Nothing is uploaded.</span></li>
+    </ul>
+    <div class="upsell-actions">
+      <a class="cta" id="upsell-cta" target="_blank" rel="noopener">Get Tucket for Mac<span class="offer" id="upsell-offer" hidden></span></a>
+      <button type="button" class="ghost" id="upsell-close">Maybe later</button>
+    </div>
+    <p class="fine" id="upsell-fine">Already have Tucket? Update to 1.3.9 and open it once, then try again.</p>
+  </dialog>
+
+  <!-- Results from Tucket's tools, shown here in Grab. -->
+  <dialog class="sheet result" id="result" aria-labelledby="result-title">
+    <header class="result-head">
+      <div>
+        <h2 id="result-title">Text from this screenshot</h2>
+        <p class="result-meta" id="result-meta"></p>
+      </div>
+      <button type="button" class="close" id="result-close" aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+    <textarea class="result-text" id="result-text" readonly spellcheck="false" hidden></textarea>
+    <div class="result-image checker" id="result-image" hidden><img id="result-img" alt="The cut-out"></div>
+    <div class="result-actions" id="result-actions"></div>
+  </dialog>
 
   <footer class="tg-footer" id="footer"></footer>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
