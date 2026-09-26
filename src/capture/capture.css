@@ -26,9 +26,9 @@ body { background: var(--bg-2); min-height: 100vh; display: flex; flex-direction
 .sync[data-state="failed"] .sync-icon { background: var(--warn); --glyph: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="4" stroke-linecap="round"><path d="M12 5v9M12 19v.5"/></svg>'); }
 .sync[data-state="edited"] { color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
 .sync[data-state="edited"] .sync-icon { background: var(--accent); }
-.sync[data-state="edited"] .sync-icon, .sync[data-state="checking"] .sync-icon, .sync[data-state="syncing"] .sync-icon {
+.sync[data-state="edited"] .sync-icon, .sync[data-state="checking"] .sync-icon, .sync[data-state="syncing"] .sync-icon, .sync[data-state="waiting"] .sync-icon {
   --glyph: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3"/><path d="M18 2.5v4.2h-4.2M6 21.5v-4.2h4.2"/></svg>'); }
-.sync[data-state="checking"] .sync-icon, .sync[data-state="syncing"] .sync-icon { background: var(--accent); animation: spin 1s linear infinite; }
+.sync[data-state="checking"] .sync-icon, .sync[data-state="syncing"] .sync-icon, .sync[data-state="waiting"] .sync-icon { background: var(--accent); animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Tucket tools: solid, outlined controls, so they read as buttons on the white bar. */

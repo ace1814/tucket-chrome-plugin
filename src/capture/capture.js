@@ -181,6 +181,7 @@ function explain(err) {
 const SYNC = {
   checking: { label: 'Checking Tucket…', title: '' },
   syncing: { label: 'Saving to Tucket…', title: '' },
+  waiting: { label: 'Waiting for Tucket…', title: 'Tucket is starting up. This saves as soon as it’s ready.' },
   synced: { label: 'In Tucket', title: () => `Saved to Tucket${siteOf(capture.pageUrl) ? `, filed under ${siteOf(capture.pageUrl)} with a link back to the page` : ''}.` },
   edited: { label: 'Update Tucket', title: 'Your marks aren’t in Tucket yet. Click to save this version too.' },
   failed: { label: 'Not saved · Retry', title: () => syncError },
@@ -197,11 +198,29 @@ function setSync(state) {
   $('#sync-label').textContent = label;
   el.title = typeof title === 'function' ? title() : title;
   el.setAttribute('aria-label', `${label}. ${el.title}`.trim());
-  el.disabled = state === 'checking' || state === 'syncing';
+  el.disabled = state === 'checking' || state === 'syncing' || state === 'waiting';
 }
 
 function markEdited() {
   if (sync === 'synced' && history.length) setSync('edited');
+}
+
+// Tucket opens its socket only after its launch checks, which can outlast one request on a cold
+// start. Those errors are worth another try a few seconds later; the others aren't.
+const RETRY_DELAYS_MS = [3000, 6000, 12000];
+const retryable = (err) => /app-not-running|timeout|disconnected|exited/i.test(String(err?.message || err));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function withRetries(fn, onWait) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= RETRY_DELAYS_MS.length || !retryable(err)) throw err;
+      onWait?.();
+      await sleep(RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 // Every capture goes to Tucket by itself when Tucket is connected, with the page it came from.
@@ -212,7 +231,9 @@ async function autoSync({ force = false } = {}) {
   setSync('syncing');
   try {
     for (const part of capture.parts) {
-      await tucket.request('ingest', { kind: 'image', data: await blobToBase64(await finalBlob(part)), ...pageMeta() });
+      const data = await blobToBase64(await finalBlob(part));
+      await withRetries(() => tucket.request('ingest', { kind: 'image', data, ...pageMeta() }), () => setSync('waiting'));
+      setSync('syncing');
     }
     capture.syncedAt = Date.now();
     // Remember it, so reopening this page doesn't save it to Tucket twice.
@@ -291,13 +312,15 @@ async function runTool(kind, btn) {
       // Marks are burned in first, so text under a blur is never read (or saved).
       const texts = [];
       for (const part of capture.parts) {
-        const res = await tucket.request('ocr', { image: await blobToBase64(await finalBlob(part)), ...pageMeta() });
+        const image = await blobToBase64(await finalBlob(part));
+        const res = await withRetries(() => tucket.request('ocr', { image, ...pageMeta() }));
         if (res.text?.trim()) texts.push(res.text.trim());
       }
       showText(texts.join('\n\n'));
     } else {
       const part = capture.parts[0];
-      const res = await tucket.request('removeBackground', { image: await blobToBase64(await finalBlob(part)), ...pageMeta() });
+      const image = await blobToBase64(await finalBlob(part));
+      const res = await withRetries(() => tucket.request('removeBackground', { image, ...pageMeta() }));
       const blob = await (await fetch(`data:image/png;base64,${res.image}`)).blob();
       showCutout(blob);
     }
@@ -473,6 +496,18 @@ async function boot() {
   setSync(TGFooter.isMac() ? 'checking' : 'hidden');
   bridge = await tucket.status({ fresh: true });
   TGFooter.mount($('#footer'), 'capture', bridge);
+  if (bridge.state === 'unavailable') {
+    // Installed but not answering yet: keep asking quietly before offering a manual retry.
+    setSync('waiting');
+    try {
+      await withRetries(async () => {
+        const s = await tucket.status({ fresh: true });
+        if (s.state === 'unavailable') throw new Error(s.reason);
+        bridge = s;
+      });
+    } catch { /* still unavailable */ }
+    if (bridge.state === 'connected') TGFooter.mount($('#footer'), 'capture', bridge);
+  }
   if (bridge.state === 'connected') await autoSync();
   else if (bridge.state === 'unavailable') { syncError = explain(bridge.reason); setSync('failed'); }
   else setSync(TGFooter.isMac() ? 'off' : 'hidden');

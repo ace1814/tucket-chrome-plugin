@@ -985,9 +985,21 @@ if (want('tucket')) {
 
   console.log('\nTucket — installed but not answering');
   {
+    // A cold start: Tucket answers a few seconds late. The page waits and saves by itself.
     await installHost('app-not-running');
-    const { page, capture } = await visibleCapture();
-    await capture.waitForSelector('#sync[data-state="failed"]', { timeout: 20000 });
+    let { page, capture } = await visibleCapture();
+    await capture.waitForSelector('#sync[data-state="waiting"]', { timeout: 15000 });
+    check(/Waiting for Tucket/.test(await capture.$eval('#sync-label', (e) => e.textContent)), 'while Tucket starts up, the badge says it’s waiting');
+    await installHost('ok');
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
+    check(true, 'and saves by itself once Tucket answers');
+    await capture.close();
+    await page.close();
+
+    // Never answers: after the quiet retries, a manual Retry.
+    await installHost('app-not-running');
+    ({ page, capture } = await visibleCapture());
+    await capture.waitForSelector('#sync[data-state="failed"]', { timeout: 60000 });
     check(/Retry/.test(await capture.$eval('#sync-label', (e) => e.textContent)), 'the badge offers a retry instead of a sales pitch');
     await installHost('ok');
     await capture.click('#sync');
