@@ -475,6 +475,64 @@ if (want('shots')) {
     await page.close();
   }
 
+  console.log('\nFull-page screenshot — linkedin.html (revealed bar, sticky rail, messaging, 14k elements)');
+  {
+    if (process.env.TG_DEBUG) await worker.evaluate(() => { globalThis.TG_DEBUG_BAND = true; });
+    const { page, tabId } = await openFixture('linkedin.html');
+    const layout = await page.evaluate(() => ({ h: document.documentElement.scrollHeight, w: document.documentElement.clientWidth }));
+    await openPanel(page, tabId, 'shot');
+    await clickIn(page, '[data-shot="full"]');
+    const capture = await waitForCapture();
+    const parts = await readParts(capture, 'shot-linkedin', (ctx, w, h) => {
+      const bands = (x, rgb) => {
+        let n = 0, on = false;
+        for (let y = 0; y < h; y++) {
+          const d = ctx.getImageData(x, y, 1, 1).data;
+          const hit = Math.abs(d[0] - rgb[0]) < 10 && Math.abs(d[1] - rgb[1]) < 10 && Math.abs(d[2] - rgb[2]) < 10;
+          if (hit && !on) n++;
+          on = hit;
+        }
+        return n;
+      };
+      return { w, h };
+    });
+    // Probe positions come from the live page, in CSS px, scaled to the capture.
+    const spots = await page.evaluate(() => {
+      const c = (sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { x: r.left + r.width / 2 + scrollX, y: r.top + scrollY }; };
+      return { avatar: c('.avatar'), rail: c('.railmark') };
+    });
+    const counts = await capture.evaluate(async (spots, dpr) => {
+      const img = document.querySelector('.part img');
+      const c = new OffscreenCanvas(img.naturalWidth, img.naturalHeight);
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0);
+      const h = img.naturalHeight;
+      const bands = (x, rgb) => {
+        let n = 0, on = false;
+        for (let y = 0; y < h; y++) {
+          const d = ctx.getImageData(x, y, 1, 1).data;
+          const hit = Math.abs(d[0] - rgb[0]) < 12 && Math.abs(d[1] - rgb[1]) < 12 && Math.abs(d[2] - rgb[2]) < 12;
+          if (hit && !on) n++;
+          on = hit;
+        }
+        return n;
+      };
+      return {
+        mini: bands(Math.round(40 * dpr), [10, 102, 194]),
+        avatar: bands(Math.round(spots.avatar.x * dpr), [195, 125, 22]),
+        rail: bands(Math.round(spots.rail.x * dpr), [145, 89, 7]),
+        msg: bands(img.naturalWidth - Math.round(100 * dpr), [5, 118, 66]),
+      };
+    }, spots, DPR);
+    check(counts.mini <= 1, 'the scroll-revealed profile bar isn’t repeated', `${counts.mini} bands`);
+    check(counts.avatar === 1, 'the top card appears once', `${counts.avatar} bands`);
+    check(counts.rail === 1, 'the sticky right rail appears once', `${counts.rail} bands`);
+    check(counts.msg <= 1, 'the Messaging bar appears at most once', `${counts.msg} bands`);
+    check(Math.abs(parts[0].height - layout.h * DPR) <= DPR * 4, 'the capture is the page’s full height', `${parts[0].height} vs ${layout.h * DPR}`);
+    await capture.close();
+    await page.close();
+  }
+
   console.log('\nFull-page screenshot — app.html (Gemini-shaped: sidebar, top bar, scrolling panel, composer)');
   {
     const { page, tabId } = await openFixture('app.html');

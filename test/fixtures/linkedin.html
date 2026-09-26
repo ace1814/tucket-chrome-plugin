@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LinkedIn-shaped profile</title>
+<!-- Built the way LinkedIn's profile page traps full-page tools:
+     - a fixed top nav;
+     - a mini-profile bar that is only shown after you scroll, by a debounced scroll handler, so it
+       appears a beat after any scroll (after a naive "hide fixed elements" pass has already run);
+     - a sticky right rail shorter than the window, which stops moving once it sticks;
+     - a fixed Messaging bar at the bottom right;
+     - more than 12,000 elements, with the revealed bar late in the DOM.
+     Each of the four carries a marker colour so repeats can be counted in the capture. -->
+<style>
+  body { margin: 0; background: #f4f2ee; font: 14px/1.5 system-ui, sans-serif; color: #1d2226; }
+  .gnav { position: fixed; top: 0; left: 0; right: 0; height: 52px; background: #ffffff; border-bottom: 1px solid #d9d9d9; z-index: 10;
+          display: flex; align-items: center; padding: 0 24px; font-weight: 600; }
+  .wrap { max-width: 1100px; margin: 76px auto 40px; display: grid; grid-template-columns: 1fr 300px; gap: 24px; align-items: start; }
+  .card { background: #fff; border-radius: 10px; padding: 24px; margin-bottom: 12px; min-height: 280px; box-shadow: 0 0 0 1px #e0dfdc; }
+  .card h2 { margin: 0 0 12px; font-size: 20px; }
+  .avatar { width: 140px; height: 140px; border-radius: 50%; background: #c37d16; }       /* top-card marker */
+  .rail { position: sticky; top: 64px; }
+  .rail .card { min-height: 200px; }
+  .railmark { width: 200px; height: 60px; border-radius: 8px; background: #915907; }        /* rail marker */
+  .mini { position: fixed; top: 52px; left: 0; right: 0; height: 60px; background: #0a66c2; color: #fff; z-index: 9;
+          display: none; align-items: center; padding: 0 24px; font-weight: 600; }            /* revealed-bar marker */
+  .mini.show { display: flex; }
+  .msg { position: fixed; right: 16px; bottom: 0; width: 288px; height: 48px; background: #057642; color: #fff;
+         border-radius: 10px 10px 0 0; display: flex; align-items: center; padding: 0 16px; z-index: 11; } /* messaging marker */
+  .filler i { display: inline; }
+</style>
+</head>
+<body>
+  <div class="gnav">in · Search · Home · My Network · Jobs · Messaging</div>
+  <div class="wrap">
+    <main>
+      <section class="card"><div class="avatar"></div><h2>Arpit Chandak</h2><p>Helping design apps &amp; websites</p></section>
+      <section class="card"><h2>Analytics</h2><p>Profile views, post impressions, search appearances.</p></section>
+      <section class="card"><h2>About</h2><p>Top skills: UX design, interaction design, mobile apps.</p><div class="filler" id="filler"></div></section>
+      <section class="card"><h2>Services</h2></section>
+      <section class="card"><h2>Featured</h2></section>
+      <section class="card"><h2>Activity</h2></section>
+      <section class="card"><h2>Experience</h2></section>
+      <section class="card"><h2>Education</h2></section>
+      <section class="card"><h2>Licenses &amp; certifications</h2></section>
+      <section class="card"><h2>Recommendations</h2></section>
+      <section class="card"><h2>Interests — the end</h2></section>
+    </main>
+    <aside class="rail">
+      <section class="card"><h2>Profile language</h2><div class="railmark"></div></section>
+      <section class="card"><h2>Who your viewers also viewed</h2></section>
+    </aside>
+  </div>
+  <div class="mini">Arpit Chandak · Helping design apps &amp; websites · Open to · Add section</div>
+  <div class="msg">Messaging</div>
+  <script>
+    // 14,000 empty inline elements, so anything placed after them in the DOM is past a 12,000 cap.
+    const filler = document.getElementById('filler');
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < 14000; i++) frag.appendChild(document.createElement('i'));
+    filler.appendChild(frag);
+    // Revealed by a debounced scroll handler, like LinkedIn's sticky mini-profile.
+    const mini = document.querySelector('.mini');
+    let t = 0;
+    addEventListener('scroll', () => {
+      clearTimeout(t);
+      t = setTimeout(() => mini.classList.toggle('show', scrollY > 300), 180);
+    }, { passive: true });
+  </script>
+</body>
+</html>
