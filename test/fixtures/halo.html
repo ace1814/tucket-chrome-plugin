@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Halo One — Sound, shaped.</title>
+<!-- The store-listing demo site: halo.audio, the made-up speaker brand from the launch reel.
+     Real web fonts from Google Fonts (Jost, Inter), inline SVG icons, a brand orange CTA, and a
+     sticky nav, so every Grab tool has something good to show. Needs the network for the fonts. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Jost:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #16161d; --cream: #f4efe6; --tang: #ff5a1f; --mint: #2dd4a7; --muted: rgba(22,22,29,.62); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--cream); color: var(--ink); font: 17px/1.55 Inter, system-ui, sans-serif; }
+  a { color: inherit; text-decoration: none; }
+  nav { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 40px; padding: 18px 64px;
+        background: rgba(244,239,230,.92); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(22,22,29,.06); }
+  .logo { display: flex; align-items: center; gap: 10px; font: 700 30px/1 Jost, sans-serif; letter-spacing: -.5px; }
+  .links { display: flex; gap: 34px; margin-left: auto; font-weight: 500; color: var(--muted); }
+  .pill { padding: 10px 22px; border-radius: 999px; background: var(--tang); color: #fff; font-weight: 600; font-size: 15px; }
+  .hero { display: grid; grid-template-columns: 1.05fr .95fr; align-items: center; gap: 24px; padding: 40px 64px 30px; min-height: 560px; }
+  h1 { margin: 0; font: 700 132px/.92 Jost, sans-serif; letter-spacing: -4px; }
+  .lede { margin: 26px 0 30px; font-size: 22px; color: var(--muted); max-width: 30ch; }
+  .ctas { display: flex; align-items: center; gap: 28px; }
+  .cta { display: inline-flex; padding: 20px 38px; border-radius: 999px; background: var(--tang); color: #fff; font-weight: 600; font-size: 20px;
+         box-shadow: 0 12px 28px rgba(255,90,31,.32); }
+  .listen { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 18px; }
+  .art { position: relative; justify-self: center; width: 440px; height: 440px; }
+  .badge { position: absolute; right: -10px; bottom: 34px; display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 999px;
+           background: rgba(255,255,255,.8); backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0,0,0,.12); font-weight: 600; font-size: 14px; }
+  .badge i { width: 10px; height: 10px; border-radius: 50%; background: var(--tang); }
+  .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; padding: 28px 64px 64px; }
+  .feature { display: flex; gap: 16px; align-items: center; }
+  .feature .ic { flex: none; width: 60px; height: 60px; border-radius: 18px; background: #fff; display: grid; place-items: center; box-shadow: 0 6px 16px rgba(22,22,29,.1); }
+  .feature strong { display: block; font-size: 18px; }
+  .feature span { color: rgba(22,22,29,.55); font-size: 15px; }
+  .story { background: var(--ink); color: #fff; padding: 110px 64px; display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+  .story h2 { margin: 0 0 18px; font: 700 64px/1 Jost, sans-serif; letter-spacing: -2px; }
+  .story p { color: rgba(255,255,255,.68); font-size: 19px; margin: 0 0 16px; }
+  .ring { aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 50% 50%, #c98a4b 0 18%, #8d5a2b 19% 20%, #b7793f 21% 38%, #7a4a22 39% 40%, #a56a35 41% 60%, #6d3f1b 61% 62%, #93602f 63% 100%); max-width: 420px; justify-self: center; width: 100%; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+  .specs { padding: 100px 64px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .specs h2 { grid-column: 1 / -1; margin: 0 0 10px; font: 700 52px/1 Jost, sans-serif; letter-spacing: -1.5px; }
+  .spec { background: #fff; border-radius: 24px; padding: 30px; }
+  .spec b { display: block; font: 700 44px/1 Jost, sans-serif; color: var(--tang); margin-bottom: 8px; }
+  .spec span { color: var(--muted); }
+  .band { margin: 0 64px 100px; border-radius: 32px; background: var(--mint); padding: 70px; display: flex; align-items: center; justify-content: space-between; gap: 40px; }
+  .band h2 { margin: 0; font: 700 56px/1 Jost, sans-serif; letter-spacing: -1.5px; max-width: 14ch; }
+  .band .cta { box-shadow: none; }
+  footer { padding: 40px 64px 60px; display: flex; justify-content: space-between; color: var(--muted); font-size: 15px; border-top: 1px solid rgba(22,22,29,.08); }
+</style>
+</head>
+<body>
+  <nav>
+    <a class="logo" href="#"><svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><circle cx="15" cy="15" r="11" fill="none" stroke="#ff5a1f" stroke-width="6"/></svg>halo</a>
+    <div class="links"><a href="#">Speakers</a><a href="#">Sound</a><a href="#">Story</a><a href="#">Support</a></div>
+    <a class="pill" href="#">Pre-order</a>
+  </nav>
+
+  <section class="hero">
+    <div>
+      <h1>Sound,<br>shaped.</h1>
+      <p class="lede">A speaker turned from one ring of oak. Forty hours. Zero cables.</p>
+      <div class="ctas">
+        <a class="cta" href="#">Pre-order · $249</a>
+        <a class="listen" href="#">Listen <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      </div>
+    </div>
+    <div class="art">
+      <svg width="440" height="440" viewBox="0 0 440 440" aria-label="Halo One">
+        <defs>
+          <radialGradient id="body" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#2a2a36"/><stop offset="1" stop-color="#101016"/></radialGradient>
+          <radialGradient id="cone" cx="45%" cy="42%" r="60%"><stop offset="0" stop-color="#ff8a5a"/><stop offset="1" stop-color="#ff5a1f"/></radialGradient>
+        </defs>
+        <circle cx="262" cy="178" r="200" fill="#2dd4a7"/>
+        <circle cx="210" cy="220" r="196" fill="url(#body)"/>
+        <g fill="none" stroke="rgba(255,255,255,.07)" stroke-width="2">
+          <circle cx="210" cy="220" r="44"/><circle cx="210" cy="220" r="66"/><circle cx="210" cy="220" r="88"/><circle cx="210" cy="220" r="110"/>
+          <circle cx="210" cy="220" r="132"/><circle cx="210" cy="220" r="154"/><circle cx="210" cy="220" r="176"/>
+        </g>
+        <circle cx="210" cy="220" r="80" fill="url(#cone)"/>
+        <circle cx="210" cy="220" r="30" fill="#16161d"/>
+        <circle cx="200" cy="210" r="8" fill="rgba(255,255,255,.5)"/>
+      </svg>
+      <div class="badge"><i></i>NEW · Halo One</div>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="feature"><div class="ic"><svg width="32" height="32" viewBox="0 0 24 24" fill="#ff5a1f"><path d="m12 2.5 2.9 6 6.6.8-4.9 4.5 1.3 6.5L12 17l-5.9 3.3 1.3-6.5L2.5 9.3l6.6-.8z"/></svg></div><div><strong>Rated 4.9</strong><span>12,000 reviews</span></div></div>
+    <div class="feature"><div class="ic"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#16161d" stroke-width="2.2" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></div><div><strong>40-hour battery</strong><span>On a single charge</span></div></div>
+    <div class="feature"><div class="ic"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#16161d" stroke-width="2.2" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></div><div><strong>Built to last</strong><span>Solid oak and steel</span></div></div>
+    <div class="feature"><div class="ic"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#2dd4a7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19c0-8 6-14 15-14 0 9-6 15-14 15"/><path d="M5 19 13 11"/></svg></div><div><strong>Carbon neutral</strong><span>Since day one</span></div></div>
+  </section>
+
+  <section class="story">
+    <div>
+      <h2>One tree.<br>One ring.</h2>
+      <p>Every Halo One starts as a single ring of reclaimed oak, turned by hand in our workshop in Porto.</p>
+      <p>The grain you see is the grain it grew with. No two sound quite the same.</p>
+    </div>
+    <div class="ring" role="img" aria-label="Oak ring"></div>
+  </section>
+
+  <section class="specs">
+    <h2>The numbers</h2>
+    <div class="spec"><b>40 h</b><span>Battery on a single charge</span></div>
+    <div class="spec"><b>360°</b><span>Room-filling sound from one driver</span></div>
+    <div class="spec"><b>1.2 kg</b><span>Solid oak, steel grille</span></div>
+  </section>
+
+  <section class="band">
+    <h2>Hear it in your room first.</h2>
+    <a class="cta" href="#">Book a 30-day trial</a>
+  </section>
+
+  <footer><span>© Halo Audio</span><span>Speakers · Sound · Story · Support</span></footer>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tucket Grab promo tile</title>
+<!-- Chrome Web Store promo art, rendered by `npm test -- store`: ?size=small (440×280) or marquee (1400×560). -->
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 100%; height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif; color: #fff; overflow: hidden;
+         background: radial-gradient(120% 140% at 20% 0%, #1a1850 0%, #0d0c22 55%, #07070f 100%); display: flex; align-items: center; }
+  .wrap { display: flex; align-items: center; width: 100%; }
+  .logo { flex: none; border-radius: 26%; box-shadow: 0 18px 50px rgba(108,108,248,.45); }
+  h1 { font-weight: 750; letter-spacing: -.03em; line-height: 1; }
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tags span { padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.14); font-weight: 600; }
+  .fine { color: rgba(255,255,255,.62); font-weight: 500; }
+  .glow { position: absolute; border-radius: 50%; filter: blur(60px); opacity: .55; }
+  /* small tile */
+  body.small .wrap { flex-direction: column; justify-content: center; gap: 14px; text-align: center; }
+  body.small .logo { width: 76px; height: 76px; }
+  body.small h1 { font-size: 40px; margin-bottom: 12px; }
+  body.small .tags { justify-content: center; gap: 6px; }
+  body.small .tags span { font-size: 12.5px; padding: 5px 10px; }
+  body.small .fine { font-size: 13px; margin-top: 10px; }
+  /* marquee */
+  body.marquee .wrap { gap: 64px; padding: 0 110px; }
+  body.marquee .logo { width: 200px; height: 200px; }
+  body.marquee h1 { font-size: 92px; margin-bottom: 22px; }
+  body.marquee .tags span { font-size: 22px; padding: 9px 18px; }
+  body.marquee .fine { font-size: 24px; margin-top: 22px; }
+</style>
+</head>
+<body>
+  <div class="glow" style="width:380px;height:380px;left:-120px;top:-160px;background:#6c6cf8"></div>
+  <div class="glow" style="width:300px;height:300px;right:-100px;bottom:-160px;background:#ff5a1f;opacity:.35"></div>
+  <div class="wrap">
+    <img class="logo" src="/tucket-icon.svg" alt="">
+    <div>
+      <h1>Tucket Grab</h1>
+      <div class="tags"><span>Colours</span><span>Fonts</span><span>SVGs</span><span>Screenshots</span></div>
+      <p class="fine">Free. No account. Nothing uploaded.</p>
+    </div>
+  </div>
+  <script>
+    document.body.className = new URLSearchParams(location.search).get('size') || 'small';
+  </script>
+</body>
+</html>

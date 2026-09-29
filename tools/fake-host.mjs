@@ -5,6 +5,7 @@
 // FAKE_HOST_DIR (set by the wrapper script the tests write) holds:
 //   mode      optional: "ok" (default), or an error code every request gets, e.g. "app-not-running"
 //   log.jsonl one line per request, with the image fields replaced by their size and dimensions
+//   ocr.txt   optional: the text the ocr op returns
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -56,7 +57,10 @@ function handle(msg) {
     case 'ocr': {
       const size = pngSize(image || '');
       if (!size) { reply(id, { error: 'failed' }); return; }
-      reply(id, { text: `Fake OCR of a ${size.width}×${size.height} image\nfrom ${msg.pageTitle || 'a page'}` });
+      // ocr.txt, when present, is the text to "find" (store screenshots); otherwise a checkable stub.
+      let text = `Fake OCR of a ${size.width}×${size.height} image\nfrom ${msg.pageTitle || 'a page'}`;
+      try { text = fs.readFileSync(path.join(DIR, 'ocr.txt'), 'utf8'); } catch { /* keep the stub */ }
+      reply(id, { text });
       return;
     }
     case 'removeBackground':

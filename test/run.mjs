@@ -9,6 +9,7 @@
 //  - host_permissions, because activeTab is only granted by a real toolbar click, which
 //    automation can't make (the tests call the same togglePanel handler instead);
 //  - the panel's shadow root is opened, so Puppeteer can reach inside it.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
@@ -36,6 +37,13 @@ function check(ok, label, detail = '') {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.svg': 'image/svg+xml', '.ttf': 'font/ttf' };
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
+  // The store screenshots' demo site answers as http://halo.audio/ (see --host-resolver-rules).
+  if (/^(www\.)?halo\.audio/.test(req.headers.host || '') && url.pathname === '/') url.pathname = '/halo.html';
+  if (url.pathname === '/tucket-icon.svg') {
+    res.writeHead(200, { 'content-type': 'image/svg+xml' });
+    res.end(await fs.readFile(path.join(ROOT, 'tools/icon.svg')));
+    return;
+  }
   if (url.pathname === '/font/serif.ttf') {
     res.writeHead(200, { 'content-type': 'font/ttf' });
     res.end(await fs.readFile('/System/Library/Fonts/Supplemental/Georgia.ttf'));
@@ -88,7 +96,10 @@ const browser = await puppeteer.launch({
   pipe: true,
   defaultViewport: null,
   ignoreDefaultArgs: ['--disable-extensions'],
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--window-size=1280,860', `--force-device-scale-factor=${DPR}`],
+  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--window-size=1280,860', `--force-device-scale-factor=${DPR}`,
+    `--host-resolver-rules=MAP *halo.audio 127.0.0.1:${server.address().port}`,
+    // halo.audio is served over plain http from this machine: no https upgrade, no loopback block.
+    '--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessRespectPreflightResults,BlockInsecurePrivateNetworkRequests,HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,HttpsFirstModeV2ForTypicallySecureUsers'],
 });
 const clipboardPerms = ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];
 await browser.defaultBrowserContext().overridePermissions(`chrome-extension://${EXPECTED_ID}`, clipboardPerms).catch(() => {});
@@ -1008,6 +1019,88 @@ if (want('tucket')) {
     await capture.close();
     await page.close();
     await fs.rm(HOST_MANIFEST, { force: true });
+  }
+}
+
+// Chrome Web Store screenshots (1280×800) on the halo.audio demo page. Opt-in: npm test -- store
+if (suites.includes('store')) {
+  console.log('\nStore screenshots — halo.html, 1280×800');
+  const dir = path.join(OUT, 'store');
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+  const shot = async (page, name) => {
+    const file = path.join(dir, `${name}.png`);
+    await page.screenshot({ path: file });
+    // Taken at 2× for crisp text, then scaled to the store's exact size.
+    execFileSync('sips', ['-z', '800', '1280', file], { stdio: 'ignore' });
+    check(true, `saved ${name}.png`);
+  };
+  const halo = async () => {
+    const page = await browser.newPage();
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await page.goto('http://www.halo.audio/', { waitUntil: 'load' });
+    await page.bringToFront();
+    const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ url: 'http://www.halo.audio/*' })).at(-1)?.id);
+    const f = { page, tabId };
+    await f.page.setViewport({ width: 1280, height: 800, deviceScaleFactor: DPR });
+    await f.page.evaluate(() => document.fonts.ready);
+    await sleep(400);
+    return f;
+  };
+
+  await installHost('ok');
+  for (const [tab, name, wait] of [['colour', '1-colours', 900], ['font', '2-fonts', 1500], ['svg', '3-svgs', 600]]) {
+    const { page, tabId } = await halo();
+    await openPanel(page, tabId, tab);
+    await sleep(wait);
+    if (tab === 'svg') await page.mouse.move(900, 380); // point at the hero art, like picking it
+    await sleep(300);
+    await shot(page, name);
+    await page.close();
+  }
+
+  // The result page: a visible-area capture, synced to Tucket, with marks on the button.
+  await fs.writeFile(path.join(HOST_DIR, 'ocr.txt'), 'halo\nSpeakers  Sound  Story  Support\nPre-order\n\nSound,\nshaped.\n\nA speaker turned from one ring of oak.\nForty hours. Zero cables.\n\nPre-order · $249\nListen\n\nRated 4.9\n12,000 reviews\n40-hour battery\nOn a single charge\nBuilt to last\nSolid oak and steel\nCarbon neutral\nSince day one');
+  const { page, tabId } = await halo();
+  await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-visible', await chrome.tabs.get(id)), tabId);
+  const capture = await waitForCapture();
+  await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: DPR });
+  await capture.bringToFront();
+  await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
+  await capture.waitForFunction(() => document.querySelector('.stage canvas.marks')?.width > 0);
+  const img = await (await capture.$('.stage img')).boundingBox();
+  const k = img.width / 1280;
+  await capture.click('[data-mark="box"]');
+  await capture.mouse.move(img.x + 48 * k, img.y + 500 * k); await capture.mouse.down();
+  await capture.mouse.move(img.x + 318 * k, img.y + 598 * k, { steps: 6 }); await capture.mouse.up();
+  await capture.click('[data-mark="arrow"]');
+  await capture.mouse.move(img.x + 600 * k, img.y + 640 * k); await capture.mouse.down();
+  await capture.mouse.move(img.x + 335 * k, img.y + 565 * k, { steps: 6 }); await capture.mouse.up();
+  await capture.click('[data-mark="arrow"]'); // tool off, so no crosshair
+  await capture.click('#sync'); // save the marked version, so the badge reads "In Tucket"
+  await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
+  await capture.mouse.move(640, 790);
+  await sleep(300);
+  await shot(capture, '4-screenshot');
+  await capture.click('[data-tool="ocr"]');
+  await capture.waitForSelector('#result[open] #result-text:not([hidden])', { timeout: 20000 });
+  await sleep(400);
+  await shot(capture, '5-extract-text');
+  await capture.close();
+  await page.close();
+  await fs.rm(HOST_MANIFEST, { force: true });
+
+  // Promo art: the required small tile and the optional marquee.
+  for (const [size, w, h, name] of [['small', 440, 280, 'promo-small-440x280'], ['marquee', 1400, 560, 'promo-marquee-1400x560']]) {
+    const tile = await browser.newPage();
+    await tile.setViewport({ width: w, height: h, deviceScaleFactor: DPR });
+    await tile.goto(`${BASE}/store-tile.html?size=${size}`, { waitUntil: 'load' });
+    await sleep(200);
+    const file = path.join(dir, `${name}.png`);
+    await tile.screenshot({ path: file });
+    execFileSync('sips', ['-z', String(h), String(w), file], { stdio: 'ignore' });
+    check(true, `saved ${name}.png`);
+    await tile.close();
   }
 }
 
