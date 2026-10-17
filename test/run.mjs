@@ -395,7 +395,16 @@ if (want('pick')) {
   await page.mouse.click(img.x + 30, img.y + 30);
   await sleep(500);
   check((await clipboard(page)).includes('viewBox="0 0 1200 800"'), '<img> SVG file grabbed by clicking it');
-  check(await inPanel(page, (r) => r.querySelectorAll('.thumb').length) === 2, 'both grabs listed');
+  const bag = await page.evaluate(() => { const r = document.querySelector('.nav-bag svg').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await page.mouse.move(bag.x - 30, bag.y);
+  await page.mouse.move(bag.x, bag.y, { steps: 4 });
+  await sleep(150);
+  const bagLabel = await inPanel(page, (r) => (r.querySelector('.tag').hidden ? '' : r.querySelector('.tag').textContent));
+  check(/20×20/.test(bagLabel), 'an icon whose SVG ignores the pointer still outlines on hover', bagLabel);
+  await page.mouse.click(bag.x, bag.y);
+  await sleep(400);
+  check((await clipboard(page)).includes('#0EA5E9'), 'and clicking grabs it', (await clipboard(page)).slice(0, 50));
+  check(await inPanel(page, (r) => r.querySelectorAll('.thumb').length) === 3, 'every grab is listed');
   await page.close();
 
   console.log('\nStrict CSP — strict.html');
@@ -1026,9 +1035,52 @@ if (want('tucket')) {
 // npm test -- store. A 960×600 window at 2×, so Grab's panel is large relative to the page and
 // stays sharp when the slide shows the whole window. Also renders the promo tiles.
 if (suites.includes('store')) {
-  console.log('\nStore source shots — halo.audio, 960×600 at 2×');
+  // STORE_SITE=apple shoots on the live apple.com instead (needs the network).
+  const SITES = {
+    halo: {
+      url: 'http://www.halo.audio/', match: 'http://www.halo.audio/*', origin: 'http://www.halo.audio', out: 'store',
+      prep: () => {},
+      svgTarget: () => { const r = document.querySelector('.art svg').getBoundingClientRect(); return { x: r.x + r.width * 0.42, y: r.y + r.height * 0.5 }; },
+      cta: () => { const r = document.querySelector('.hero .cta').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; },
+      settle: 400,
+      arrow: (cta) => [{ x: cta.x + cta.width + 250, y: cta.y - 110 }, { x: cta.x + cta.width + 18, y: cta.y - 8 }],
+      ocr: async () => 'halo\nSpeakers  Sound  Story  Support\nPre-order\n\nSound,\nshaped.\n\nA speaker turned from one ring of oak.\nForty hours. Zero cables.\n\nPre-order · $249\nListen\n\nRated 4.9\n12,000 reviews\n40-hour battery\nOn a single charge\nBuilt to last\nSolid oak and steel\nCarbon neutral\nSince day one',
+    },
+    apple: {
+      url: 'https://www.apple.com/', match: 'https://www.apple.com/*', origin: 'https://www.apple.com', out: 'store-apple',
+      // The "choose your country" bar is for visitors outside the US; it isn't part of the page.
+      // Closed with its own button, so the nav moves back up to the top.
+      prep: () => { document.querySelector('#ac-ls-close')?.click(); window.scrollTo(0, 0); },
+      // The shopping-bag icon in the nav: an ordinary SVG icon, not the Apple logo.
+      svgTarget: () => {
+        const svgs = [...document.querySelectorAll('nav svg, #globalnav svg')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 8 && r.top >= 0 && r.top < 120);
+        const r = svgs.sort((a, b) => b.x - a.x)[0];
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      },
+      cta: () => {
+        const a = [...document.querySelectorAll('a')].find((e) => /learn more/i.test(e.textContent) && e.getBoundingClientRect().top > 60 && e.getBoundingClientRect().bottom < innerHeight);
+        const r = a.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      },
+      // What's on screen: the nav, then the hero's lines once (its typing animation keeps
+      // partial copies of the headline in the DOM), then its buttons.
+      ocr: (page) => page.evaluate(() => {
+        // The Apple logo is a picture, not text, so OCR wouldn't read it as a word.
+        const nav = [...document.querySelectorAll('#globalnav .globalnav-link-text')].map((t) => t.textContent.trim()).filter((t) => t && t !== 'Apple').join('  ');
+        const lines = (document.querySelector('main section')?.innerText || '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 8);
+        const hero = lines.filter((l, i) => !lines.some((o, j) => j !== i && o.length > l.length && o.toLowerCase().includes(l.toLowerCase())))
+          .filter((l, i, a) => a.findIndex((o) => o.toLowerCase() === l.toLowerCase()) === i);
+        return `${nav}\n\n${hero.join('\n')}`;
+      }),
+      settle: 4500,
+      // An arrow from the empty space left of the button.
+      arrow: (cta) => [{ x: cta.x - 230, y: cta.y + cta.height + 90 }, { x: cta.x - 18, y: cta.y + cta.height / 2 + 6 }],
+    },
+  };
+  const STORE = SITES[process.env.STORE_SITE || 'halo'];
+  console.log(`\nStore source shots — ${STORE.url}, 960×600 at 2×`);
   const W = 960, H = 600;
-  const dir = path.join(OUT, 'store');
+  const dir = path.join(OUT, STORE.out);
   await fs.rm(dir, { recursive: true, force: true });
   await fs.mkdir(dir, { recursive: true });
   const shot = async (page, name) => {
@@ -1039,21 +1091,22 @@ if (suites.includes('store')) {
     const page = await browser.newPage();
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
     await page.setViewport({ width: W, height: H, deviceScaleFactor: DPR });
-    await page.goto('http://www.halo.audio/', { waitUntil: 'load' });
+    await page.goto(STORE.url, { waitUntil: 'networkidle2', timeout: 60000 });
     await page.bringToFront();
-    const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ url: 'http://www.halo.audio/*' })).at(-1)?.id);
+    const tabId = await worker.evaluate(async (match) => (await chrome.tabs.query({ url: match })).at(-1)?.id, STORE.match);
     await page.evaluate(() => document.fonts.ready);
-    await sleep(400);
+    await page.evaluate(STORE.prep);
+    await sleep(STORE.settle);
     return { page, tabId };
   };
 
   // Where the panel sits on halo.audio: top right by default; on the left for the SVG shot,
   // so the outlined hero art stays in view.
-  const setPanelPos = (pos) => worker.evaluate(async (pos) => {
+  const setPanelPos = (pos) => worker.evaluate(async (pos, origin) => {
     const { panelPos = {} } = await chrome.storage.local.get('panelPos');
-    if (pos) panelPos['http://www.halo.audio'] = pos; else delete panelPos['http://www.halo.audio'];
+    if (pos) panelPos[origin] = pos; else delete panelPos[origin];
     await chrome.storage.local.set({ panelPos });
-  }, pos);
+  }, pos, STORE.origin);
   await installHost('ok');
   for (const [tab, name, wait] of [['colour', 'colours', 900], ['font', 'fonts', 1500], ['svg', 'svgs', 600]]) {
     await setPanelPos(tab === 'svg' ? { left: 28, top: 84 } : null);
@@ -1061,19 +1114,23 @@ if (suites.includes('store')) {
     await openPanel(page, tabId, tab);
     await sleep(wait);
     if (tab === 'svg') {
-      const art = await page.evaluate(() => { const r = document.querySelector('.art svg').getBoundingClientRect(); return { x: r.x + r.width * 0.42, y: r.y + r.height * 0.5 }; });
-      await page.mouse.move(art.x, art.y); // pointing at the hero art, like picking it
+      const art = await page.evaluate(STORE.svgTarget);
+      // Pointing at an SVG, like picking it; moved in from the side so the hover registers.
+      await page.mouse.move(art.x - 40, art.y + 30);
+      await page.mouse.move(art.x, art.y, { steps: 8 });
     }
     await sleep(300);
     await shot(page, name);
+    // What the panel says, for the slide callouts.
+    await fs.writeFile(path.join(dir, `${name}.txt`), await inPanel(page, (r) => r.querySelector('.panel').innerText));
     await page.close();
   }
   await setPanelPos(null);
 
   // The result page: a visible-area capture, synced to Tucket, with the buy button marked.
-  await fs.writeFile(path.join(HOST_DIR, 'ocr.txt'), 'halo\nSpeakers  Sound  Story  Support\nPre-order\n\nSound,\nshaped.\n\nA speaker turned from one ring of oak.\nForty hours. Zero cables.\n\nPre-order · $249\nListen\n\nRated 4.9\n12,000 reviews\n40-hour battery\nOn a single charge\nBuilt to last\nSolid oak and steel\nCarbon neutral\nSince day one');
   const { page, tabId } = await halo();
-  const cta = await page.evaluate(() => { const r = document.querySelector('.hero .cta').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
+  await fs.writeFile(path.join(HOST_DIR, 'ocr.txt'), await STORE.ocr(page));
+  const cta = await page.evaluate(STORE.cta);
   await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-visible', await chrome.tabs.get(id)), tabId);
   const capture = await waitForCapture();
   // Taller than the page's window, so the marked button clears the markup bar.
@@ -1090,7 +1147,7 @@ if (suites.includes('store')) {
   await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
   await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
   await capture.click('[data-mark="arrow"]');
-  p1 = at(cta.x + cta.width + 250, cta.y - 110); p2 = at(cta.x + cta.width + 18, cta.y - 8);
+  [p1, p2] = STORE.arrow(cta).map((p) => at(p.x, p.y));
   await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
   await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
   await capture.click('[data-mark="arrow"]'); // tool off, so no crosshair

@@ -472,8 +472,24 @@
     return null;
   }
 
+  // An icon whose <svg> has pointer-events: none (Apple's nav, many icon buttons) never comes
+  // up under the pointer: the link or button around it does. Look inside for an SVG that
+  // covers the point.
+  function svgUnder(node, point) {
+    if (!point || !node.querySelector) return null;
+    const svgs = node.getElementsByTagName('svg');
+    if (!svgs.length || svgs.length > 12) return null;
+    for (const svg of svgs) {
+      if (svg.parentElement?.closest('svg')) continue;
+      const r = svg.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) continue;
+      if (point.x >= r.left - 2 && point.x <= r.right + 2 && point.y >= r.top - 2 && point.y <= r.bottom + 2) return svg;
+    }
+    return null;
+  }
+
   /** The grabbable SVG at this element, climbing a few levels: { el, type, url? } or null. */
-  function targetAt(start) {
+  function targetAt(start, point = null) {
     if (!(start instanceof Element)) return null;
     const svg = start.closest('svg');
     if (svg) {
@@ -484,6 +500,8 @@
     let node = start;
     for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
       if (node === document.body || node === document.documentElement) break;
+      const inner = svgUnder(node, point);
+      if (inner) return { el: inner, type: 'inline' };
       if (node.localName === 'img') {
         const src = node.currentSrc || node.src;
         if (isSvgUrl(src)) return { el: node, type: 'file', url: src };

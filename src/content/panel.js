@@ -518,7 +518,7 @@
 
     function findTarget(el) {
       const m = mode();
-      if (m === 'svg') return tg.svgs.targetAt(el);
+      if (m === 'svg') return tg.svgs.targetAt(el, pointer);
       if (m === 'font') return textTarget(el);
       return null;
     }

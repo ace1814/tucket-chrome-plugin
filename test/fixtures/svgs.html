@@ -58,5 +58,10 @@
     <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2 2 22h20z"/></svg>
     <span>Duplicate of the first icon</span>
   </div>
+  <!-- An icon button whose SVG ignores the pointer (pointer-events: none), as on Apple's nav:
+       hit-testing finds the button, never the SVG. -->
+  <button class="nav-bag" style="position: fixed; left: 20px; bottom: 20px; padding: 14px; border: 0; background: #eee; border-radius: 10px">
+    <svg width="20" height="20" viewBox="0 0 20 20" style="pointer-events: none; display: block"><path d="M4 6h12l-1 11H5z" fill="#0EA5E9"/></svg>
+  </button>
 </body>
 </html>
