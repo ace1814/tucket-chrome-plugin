@@ -890,6 +890,10 @@ if (want('shortcuts')) {
   const commands = JSON.parse(await fs.readFile(path.join(ROOT, 'manifest.json'), 'utf8')).commands;
   const suggested = Object.values(commands).filter((c) => c.suggested_key).length;
   check(suggested <= 4, 'within Chrome’s limit of four suggested shortcuts', `${suggested}`);
+  // Chrome assigns suggested keys on a fresh install only (never on reload or update), so this
+  // is what a new user, or a store reviewer, gets.
+  const assigned = await worker.evaluate(async () => Object.fromEntries((await chrome.commands.getAll()).map((c) => [c.name, c.shortcut])));
+  for (const name of Object.keys(commands)) check(!!assigned[name], `a fresh install binds ${name}`, assigned[name] || 'not set');
   for (const [command, label] of [['shot-full', 'Full page'], ['shot-visible', 'Visible area']]) {
     const { page, tabId } = await openFixture('marketing.html');
     await openPanel(page, tabId, 'colour');     // open on purpose: it must not end up in the capture
