@@ -1022,70 +1022,88 @@ if (want('tucket')) {
   }
 }
 
-// Chrome Web Store screenshots (1280×800) on the halo.audio demo page. Opt-in: npm test -- store
+// Source shots for the Chrome Web Store slides, on the halo.audio demo page. Opt-in:
+// npm test -- store. A 960×600 window at 2×, so Grab's panel is large relative to the page and
+// stays sharp when the slide shows the whole window. Also renders the promo tiles.
 if (suites.includes('store')) {
-  console.log('\nStore screenshots — halo.html, 1280×800');
+  console.log('\nStore source shots — halo.audio, 960×600 at 2×');
+  const W = 960, H = 600;
   const dir = path.join(OUT, 'store');
   await fs.rm(dir, { recursive: true, force: true });
   await fs.mkdir(dir, { recursive: true });
   const shot = async (page, name) => {
-    const file = path.join(dir, `${name}.png`);
-    await page.screenshot({ path: file });
-    // Taken at 2× for crisp text, then scaled to the store's exact size.
-    execFileSync('sips', ['-z', '800', '1280', file], { stdio: 'ignore' });
+    await page.screenshot({ path: path.join(dir, `${name}.png`) });
     check(true, `saved ${name}.png`);
   };
   const halo = async () => {
     const page = await browser.newPage();
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await page.setViewport({ width: W, height: H, deviceScaleFactor: DPR });
     await page.goto('http://www.halo.audio/', { waitUntil: 'load' });
     await page.bringToFront();
     const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ url: 'http://www.halo.audio/*' })).at(-1)?.id);
-    const f = { page, tabId };
-    await f.page.setViewport({ width: 1280, height: 800, deviceScaleFactor: DPR });
-    await f.page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => document.fonts.ready);
     await sleep(400);
-    return f;
+    return { page, tabId };
   };
 
+  // Where the panel sits on halo.audio: top right by default; on the left for the SVG shot,
+  // so the outlined hero art stays in view.
+  const setPanelPos = (pos) => worker.evaluate(async (pos) => {
+    const { panelPos = {} } = await chrome.storage.local.get('panelPos');
+    if (pos) panelPos['http://www.halo.audio'] = pos; else delete panelPos['http://www.halo.audio'];
+    await chrome.storage.local.set({ panelPos });
+  }, pos);
   await installHost('ok');
-  for (const [tab, name, wait] of [['colour', '1-colours', 900], ['font', '2-fonts', 1500], ['svg', '3-svgs', 600]]) {
+  for (const [tab, name, wait] of [['colour', 'colours', 900], ['font', 'fonts', 1500], ['svg', 'svgs', 600]]) {
+    await setPanelPos(tab === 'svg' ? { left: 28, top: 84 } : null);
     const { page, tabId } = await halo();
     await openPanel(page, tabId, tab);
     await sleep(wait);
-    if (tab === 'svg') await page.mouse.move(900, 380); // point at the hero art, like picking it
+    if (tab === 'svg') {
+      const art = await page.evaluate(() => { const r = document.querySelector('.art svg').getBoundingClientRect(); return { x: r.x + r.width * 0.42, y: r.y + r.height * 0.5 }; });
+      await page.mouse.move(art.x, art.y); // pointing at the hero art, like picking it
+    }
     await sleep(300);
     await shot(page, name);
     await page.close();
   }
+  await setPanelPos(null);
 
-  // The result page: a visible-area capture, synced to Tucket, with marks on the button.
+  // The result page: a visible-area capture, synced to Tucket, with the buy button marked.
   await fs.writeFile(path.join(HOST_DIR, 'ocr.txt'), 'halo\nSpeakers  Sound  Story  Support\nPre-order\n\nSound,\nshaped.\n\nA speaker turned from one ring of oak.\nForty hours. Zero cables.\n\nPre-order · $249\nListen\n\nRated 4.9\n12,000 reviews\n40-hour battery\nOn a single charge\nBuilt to last\nSolid oak and steel\nCarbon neutral\nSince day one');
   const { page, tabId } = await halo();
+  const cta = await page.evaluate(() => { const r = document.querySelector('.hero .cta').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
   await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-visible', await chrome.tabs.get(id)), tabId);
   const capture = await waitForCapture();
-  await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: DPR });
+  // Taller than the page's window, so the marked button clears the markup bar.
+  await capture.setViewport({ width: W, height: 720, deviceScaleFactor: DPR });
   await capture.bringToFront();
   await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
   await capture.waitForFunction(() => document.querySelector('.stage canvas.marks')?.width > 0);
+  await capture.evaluate(() => window.scrollTo(0, 0));
   const img = await (await capture.$('.stage img')).boundingBox();
-  const k = img.width / 1280;
+  const k = img.width / W;
+  const at = (x, y) => ({ x: img.x + x * k, y: img.y + y * k });
   await capture.click('[data-mark="box"]');
-  await capture.mouse.move(img.x + 48 * k, img.y + 500 * k); await capture.mouse.down();
-  await capture.mouse.move(img.x + 318 * k, img.y + 598 * k, { steps: 6 }); await capture.mouse.up();
+  let p1 = at(cta.x - 10, cta.y - 10), p2 = at(cta.x + cta.width + 10, cta.y + cta.height + 10);
+  await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
+  await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
   await capture.click('[data-mark="arrow"]');
-  await capture.mouse.move(img.x + 600 * k, img.y + 640 * k); await capture.mouse.down();
-  await capture.mouse.move(img.x + 335 * k, img.y + 565 * k, { steps: 6 }); await capture.mouse.up();
+  p1 = at(cta.x + cta.width + 250, cta.y - 110); p2 = at(cta.x + cta.width + 18, cta.y - 8);
+  await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
+  await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
   await capture.click('[data-mark="arrow"]'); // tool off, so no crosshair
   await capture.click('#sync'); // save the marked version, so the badge reads "In Tucket"
   await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
-  await capture.mouse.move(640, 790);
+  await capture.mouse.move(W / 2, 716);
+  await capture.evaluate(() => window.scrollTo(0, 0));
   await sleep(300);
-  await shot(capture, '4-screenshot');
+  await shot(capture, 'screenshot');
   await capture.click('[data-tool="ocr"]');
   await capture.waitForSelector('#result[open] #result-text:not([hidden])', { timeout: 20000 });
-  await sleep(400);
-  await shot(capture, '5-extract-text');
+  await sleep(500);
+  await shot(capture, 'extract-text');
   await capture.close();
   await page.close();
   await fs.rm(HOST_MANIFEST, { force: true });
