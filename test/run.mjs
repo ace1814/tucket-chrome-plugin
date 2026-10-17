@@ -1104,6 +1104,116 @@ if (suites.includes('store')) {
   }
 }
 
+// Zoomed-in source shots for the store slides, taken on the live trytucket.com (needs the
+// network). Opt-in: npm test -- store-live. Writes 2× crops to test/out/store-live/.
+if (suites.includes('store-live')) {
+  console.log('\nStore source shots — trytucket.com, zoomed crops');
+  const SITE = 'https://www.trytucket.com/';
+  const dir = path.join(OUT, 'store-live');
+  await fs.rm(dir, { recursive: true, force: true });
+  await fs.mkdir(dir, { recursive: true });
+  const crop = async (page, name, r, pad = 0) => {
+    const vp = page.viewport();
+    const x = Math.max(0, Math.floor(r.x - pad)), y = Math.max(0, Math.floor(r.y - pad));
+    const clip = { x, y, width: Math.min(vp.width, Math.ceil(r.x + r.width + pad)) - x, height: Math.min(vp.height, Math.ceil(r.y + r.height + pad)) - y };
+    clip.y += await page.evaluate(() => scrollY);
+    await page.screenshot({ path: path.join(dir, `${name}.png`), clip });
+    check(true, `saved ${name}.png`, `${clip.width * DPR}×${clip.height * DPR}`);
+  };
+  const union = (...rs) => {
+    const x = Math.min(...rs.map((r) => r.x)), y = Math.min(...rs.map((r) => r.y));
+    return { x, y, width: Math.max(...rs.map((r) => r.x + r.width)) - x, height: Math.max(...rs.map((r) => r.y + r.height)) - y };
+  };
+  const rectOf = (page, sel) => page.evaluate((sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return r && { x: r.x, y: r.y, width: r.width, height: r.height }; }, sel);
+  const panelRect = (page) => inPanel(page, (root) => { const r = root.querySelector('.panel').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
+  const site = async () => {
+    const page = await browser.newPage();
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: DPR });
+    await page.goto(SITE, { waitUntil: 'networkidle2' });
+    await page.evaluate(() => document.fonts.ready);
+    await sleep(1500);
+    await page.bringToFront();
+    const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ url: 'https://www.trytucket.com/*' })).at(-1)?.id);
+    return { page, tabId };
+  };
+  const setPanelPos = (pos) => worker.evaluate(async (pos) => {
+    const { panelPos = {} } = await chrome.storage.local.get('panelPos');
+    if (pos) panelPos['https://www.trytucket.com'] = pos; else delete panelPos['https://www.trytucket.com'];
+    await chrome.storage.local.set({ panelPos });
+  }, pos);
+
+  await installHost('ok');
+  await setPanelPos(null);
+  for (const [tab, name, wait] of [['colour', 'colours', 1200], ['font', 'fonts', 2500]]) {
+    const { page, tabId } = await site();
+    await openPanel(page, tabId, tab);
+    await sleep(wait);
+    const r = await panelRect(page);
+    await crop(page, name, { x: r.x - 320, y: 0, width: r.width + 320, height: r.y + r.height + 36 });
+    await page.close();
+  }
+
+  // SVG: the panel moved to the left, pointing at the "copy pasting is boring" sticker.
+  {
+    await setPanelPos({ left: 40, top: 64 });
+    const { page, tabId } = await site();
+    await openPanel(page, tabId, 'svg');
+    await sleep(800);
+    const sticker = await rectOf(page, 'img[src*="sticker-text"]');
+    await page.mouse.move(sticker.x + sticker.width / 2, sticker.y + sticker.height / 2);
+    await sleep(500);
+    const r = await panelRect(page);
+    await crop(page, 'svgs', union(r, sticker), 40);
+    await page.close();
+    await setPanelPos(null);
+  }
+
+  // The result page: the hero, with the CTA boxed, synced to Tucket; then Extract text.
+  {
+    const { page, tabId } = await site();
+    const cta = await page.evaluate(() => {
+      const a = [...document.querySelectorAll('a, button')].find((e) => /lifetime/i.test(e.textContent) && e.getBoundingClientRect().top < innerHeight);
+      const r = a.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    const heroText = await page.evaluate(() => [...document.querySelectorAll('h1, h1 ~ p, main p')].slice(0, 2).map((e) => e.innerText.trim()).join('\n\n'));
+    await fs.writeFile(path.join(HOST_DIR, 'ocr.txt'), `tucket\nTucket  Features  Pricing  FAQ\nGet Tucket\n\n${heroText}\n\nGet lifetime at $10\n\nhttps://www.trytucket.com/\ncopy pasting\nis boring`);
+    await worker.evaluate(async (id) => globalThis.tucketGrab.runCommand('shot-visible', await chrome.tabs.get(id)), tabId);
+    const capture = await waitForCapture();
+    await capture.setViewport({ width: 1280, height: 800, deviceScaleFactor: DPR });
+    await capture.bringToFront();
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
+    await capture.waitForFunction(() => document.querySelector('.stage canvas.marks')?.width > 0);
+    const img = await (await capture.$('.stage img')).boundingBox();
+    const k = img.width / 1280;
+    const at = (x, y) => ({ x: img.x + x * k, y: img.y + y * k });
+    await capture.click('[data-mark="box"]');
+    let p1 = at(cta.x - 12, cta.y - 10), p2 = at(cta.x + cta.width + 12, cta.y + cta.height + 10);
+    await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
+    await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
+    await capture.click('[data-mark="arrow"]');
+    p1 = at(cta.x + cta.width + 190, cta.y + cta.height + 110); p2 = at(cta.x + cta.width + 24, cta.y + cta.height / 2 + 4);
+    await capture.mouse.move(p1.x, p1.y); await capture.mouse.down();
+    await capture.mouse.move(p2.x, p2.y, { steps: 6 }); await capture.mouse.up();
+    await capture.click('[data-mark="arrow"]');
+    await capture.click('#sync');
+    await capture.waitForSelector('#sync[data-state="synced"]', { timeout: 20000 });
+    await capture.mouse.move(5, 790);
+    await sleep(300);
+    const box = at(cta.x - 120, cta.y + cta.height + 160);
+    const left = img.x + (cta.x - 260) * k;
+    await crop(capture, 'screenshot', { x: left, y: 0, width: 1280 - left, height: box.y });
+    await capture.click('[data-tool="ocr"]');
+    await capture.waitForSelector('#result[open] #result-text:not([hidden])', { timeout: 20000 });
+    await sleep(500);
+    await crop(capture, 'extract-text', await rectOf(capture, '#result'), 36);
+    await capture.close();
+    await page.close();
+  }
+  await fs.rm(HOST_MANIFEST, { force: true });
+}
+
 if (want('screens')) {
   console.log('\nScreens for review — light and dark, busy and plain pages');
   for (const dark of [false, true]) {
