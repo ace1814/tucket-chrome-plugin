@@ -12,4 +12,4 @@ Tucket Grab collects nothing about you.
 - No analytics, no tracking, no accounts, no remote code.
 - Links to trytucket.com carry a `utm_source` tag, so the website can count visits that came from the extension. Links to font stores open only when you click them.
 
-Questions: reacharpit1801@gmail.com
+Questions: hello@arpitchandak.com
