@@ -360,7 +360,34 @@ if (want('panel')) {
   // The card clears its per-tab popup as it opens, so the next click on a normal page opens the panel.
   await sleep(300);
   check(await worker.evaluate((id) => chrome.action.getPopup({ tabId: id }), blockedTab.id) === '', 'and resets the toolbar for next time');
+  // The popup itself can't be driven here; the same page opened in a tab can.
+  const card = await browser.newPage();
+  await card.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await card.setViewport({ width: 300, height: 316, deviceScaleFactor: DPR });
+  await card.goto(`chrome-extension://${extId}/src/blocked/blocked.html`);
+  check(await card.evaluate(() => !!document.querySelector('#shot') && !!document.querySelector('#pick')), 'and offers a screenshot and the colour picker there');
+  await card.screenshot({ path: path.join(OUT, 'screen-locked-page.png') });
+  await card.close();
   await blocked.close();
+
+  // A page Grab can't script but may capture (its own welcome page stands in for chrome:// and
+  // the Web Store, which need a real toolbar click): a full-page shortcut falls back to the
+  // visible area and says why.
+  const locked = await browser.newPage();
+  await locked.goto(`chrome-extension://${extId}/src/welcome/welcome.html`);
+  await locked.bringToFront();
+  // Without the "tabs" permission the worker can't read an extension page's URL; it's the active tab.
+  const lockedTab = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]);
+  await worker.evaluate(async (tab) => globalThis.tucketGrab.runCommand('shot-full', tab), lockedTab);
+  const lockedCapture = await waitForCapture();
+  const lockedMeta = await lockedCapture.$eval('#page-meta', (e) => e.textContent);
+  const lockedNotes = await lockedCapture.$eval('#notes', (e) => (e.hidden ? '' : e.textContent));
+  check(lockedMeta.startsWith('Visible area'), 'on a locked page, a full-page shortcut takes the visible area', lockedMeta.split(' · ')[0]);
+  check(/locks this page/.test(lockedNotes), 'and the result says why', lockedNotes.slice(0, 50));
+  const lockedSize = await lockedCapture.$eval('.part img', (i) => i.naturalWidth);
+  check(lockedSize === (await locked.evaluate(() => innerWidth)) * DPR, 'sharp at the screen’s pixel ratio', `${lockedSize}px`);
+  await lockedCapture.close();
+  await locked.close();
 }
 
 if (want('pick')) {

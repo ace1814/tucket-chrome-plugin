@@ -501,7 +501,25 @@ function friendlyError(err) {
 
 // ---------- screenshots ----------
 
+// Whether Grab may run code in this tab. chrome:// pages, the Web Store, other extensions' pages
+// and the PDF viewer say no to every extension.
+async function canScript(tabId) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, func: () => true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function runShot({ mode, tabId }) {
+  // Locked pages still allow a picture of what's on screen (Chrome lets activeTab capture them),
+  // but nothing that needs the page itself: scrolling for a full page, or the region overlay.
+  const notes = [];
+  if (mode !== 'visible' && !(await canScript(tabId))) {
+    notes.push(`The browser locks this page, so Grab took the visible area. ${mode === 'full' ? 'Full-page' : 'Selected-area'} screenshots work on ordinary websites.`);
+    mode = 'visible';
+  }
   job = { tabId, mode, cancelled: false, progress: { phase: 'starting', mode } };
   // Started from a shortcut, the panel may be open on the page: it must never be in the capture.
   // It comes back by itself when the capture reports done, cancelled or failed.
@@ -528,10 +546,12 @@ async function runShot({ mode, tabId }) {
     report({ phase: 'saving', mode });
     const id = crypto.randomUUID();
     await pruneCaptures();
+    // A locked page can't be asked for its pixel ratio; the image width over the tab's says it.
     const [dpr] = await chrome.scripting.executeScript({ target: { tabId }, func: () => devicePixelRatio }).catch(() => [null]);
+    const measured = mode === 'visible' && tab.width ? Math.round((result.parts[0].width / tab.width) * 100) / 100 : 0;
     await putCapture({
       id, mode, createdAt: Date.now(), pageUrl: tab.url, pageTitle: tab.title,
-      dpr: dpr?.result || 1, parts: result.parts, notes: result.notes,
+      dpr: dpr?.result || measured || 1, parts: result.parts, notes: [...notes, ...result.notes],
     });
     report({ phase: 'done', mode, id });
     await chrome.tabs.create({

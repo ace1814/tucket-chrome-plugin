@@ -4,13 +4,34 @@
   <meta charset="utf-8">
   <title>Tucket Grab</title>
   <link rel="stylesheet" href="blocked.css">
+  <script src="../shared/send.js"></script>
   <script type="module" src="blocked.js"></script>
 </head>
 <body>
+  <!-- Shown on pages the browser locks (chrome:// pages, the Web Store, other extensions' pages).
+       Grab can't read them, but it can still screenshot what's on screen and pick colours. -->
   <main class="card">
-    <div class="mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v9"/><path d="m8 9.5 4 4 4-4"/><path d="M5 14v3a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-3"/></svg></div>
-    <h1>Can’t grab from this page</h1>
-    <p>The browser keeps pages like settings, the new tab page and the extension store off-limits. Open any website and click Tucket Grab again.</p>
+    <div class="mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg></div>
+    <h1>This page is locked by the browser</h1>
+    <p>Grab can’t read fonts or SVGs here, but these still work.</p>
+
+    <div class="actions">
+      <button type="button" class="action" id="shot">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 9h17"/></svg>
+        <span><strong>Screenshot</strong><small>What’s on screen now</small></span>
+      </button>
+      <button type="button" class="action" id="pick">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6.5 3 3"/><path d="M17.8 3.2a2.1 2.1 0 0 1 3 3L9 18l-4 1 1-4z"/></svg>
+        <span><strong>Pick a colour</strong><small>From anywhere on screen</small></span>
+      </button>
+    </div>
+
+    <div class="picked" id="picked" hidden>
+      <span class="swatch" id="swatch"></span>
+      <code id="hex"></code>
+      <span class="done" id="done"></span>
+    </div>
+    <p class="error" id="error" role="status" hidden></p>
   </main>
 </body>
 </html>
