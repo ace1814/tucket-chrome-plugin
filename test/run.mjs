@@ -410,6 +410,9 @@ if (want('pick')) {
   check(await inPanel(page, (r) => !!r.querySelector('.preview svg')), 'grabbed SVG previews in the panel');
   const ghosts = await inPanel(page, (r) => [...r.querySelectorAll('.ghost')].filter((g) => !g.hidden).length);
   check(ghosts >= 8, 'every grabbable SVG on the page is outlined at once', `${ghosts} outlined`);
+  const chevron = await page.evaluate(() => { const r = document.querySelector('.faded-chevron svg').getBoundingClientRect(); return { x: r.x, y: r.y }; });
+  const ghostOnChevron = await inPanel(page, (r, c) => [...r.querySelectorAll('.ghost')].some((g) => { const b = g.getBoundingClientRect(); return !g.hidden && Math.abs(b.x - c.x) < 6 && Math.abs(b.y - c.y) < 6; }), chevron);
+  check(!ghostOnChevron, 'an SVG faded out by its parent (a hover-only chevron) isn’t outlined');
   check(/\d+ SVGs on this page|more outlined/.test(await inPanel(page, (r) => r.querySelector('.body').textContent)), 'the panel says how many there are');
   await page.screenshot({ path: path.join(OUT, 'panel-svg-grabbed.png') });
 
@@ -1100,6 +1103,7 @@ if (suites.includes('store')) {
         return `${nav}\n\n${hero.join('\n')}`;
       }),
       settle: 4500,
+      hideGhostsAbove: 60,
       // An arrow from the empty space left of the button.
       arrow: (cta) => [{ x: cta.x - 230, y: cta.y + cta.height + 90 }, { x: cta.x - 18, y: cta.y + cta.height / 2 + 6 }],
     },
@@ -1145,6 +1149,11 @@ if (suites.includes('store')) {
       // Pointing at an SVG, like picking it; moved in from the side so the hover registers.
       await page.mouse.move(art.x - 40, art.y + 30);
       await page.mouse.move(art.x, art.y, { steps: 8 });
+    }
+    // Slide staging: Apple draws its nav words as SVGs, and a row of outlined words reads as
+    // clutter on a store slide. Hide those outlines for this one shot.
+    if (tab === 'svg' && STORE.hideGhostsAbove) {
+      await inPanel(page, (r, y) => { for (const g of r.querySelectorAll('.ghost')) if (g.getBoundingClientRect().top < y) g.style.display = 'none'; }, STORE.hideGhostsAbove);
     }
     await sleep(300);
     await shot(page, name);

@@ -372,7 +372,7 @@
       if (items.length >= MAX_ITEMS) break;
       if (svg.parentElement?.closest('svg')) continue;
       const rect = svg.getBoundingClientRect();
-      const visible = rect.width > 0 && rect.height > 0 && getComputedStyle(svg).visibility !== 'hidden';
+      const visible = rect.width > 0 && rect.height > 0 && !faded(svg);
       const symbols = svg.querySelectorAll('symbol[id]');
       if (symbols.length && (!visible || isSpriteSheet(svg))) {
         for (const symbol of symbols) {
@@ -488,6 +488,20 @@
     return null;
   }
 
+  // Faded out by itself or an ancestor: a menu chevron that only appears on hover, an icon
+  // waiting for its animation. Nothing anyone can see, so it isn't outlined or listed.
+  function faded(el) {
+    let opacity = 1;
+    for (let node = el, depth = 0; node && node.nodeType === 1 && depth < 8; node = node.parentElement, depth++) {
+      const cs = getComputedStyle(node);
+      if (cs.visibility === 'hidden' || cs.display === 'none') return true;
+      opacity *= parseFloat(cs.opacity) || 0;
+      if (opacity < 0.05) return true;
+      if (node === document.body) break;
+    }
+    return false;
+  }
+
   /** The grabbable SVG at this element, climbing a few levels: { el, type, url? } or null. */
   function targetAt(start, point = null) {
     if (!(start instanceof Element)) return null;
@@ -528,8 +542,7 @@
       if (!el || seen.has(el)) return;
       const r = el.getBoundingClientRect();
       if (r.width < MIN_GHOST || r.height < MIN_GHOST) return;
-      const cs = getComputedStyle(el);
-      if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0') return;
+      if (faded(el)) return;
       seen.add(el);
       allTargets.push({ el, type, url });
     };
